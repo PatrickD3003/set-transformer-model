@@ -5,22 +5,9 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
 import os
-from modules_modified import ISAB, SAB, PMA
+from modules_modified import ISAB, SAB, PMA, OrdinalHead
 import pandas as pd
 import openpyxl
-
-
-class OrdinalHead(nn.Module):
-    def __init__(self, in_dim: int, num_classes: int):
-        super().__init__()
-        if num_classes < 2:
-            raise ValueError("Ordinal head requires at least two classes")
-        self.fc = nn.Linear(in_dim, num_classes - 1)
-
-    def forward(self, features):
-        logits = self.fc(features)
-        probs = torch.sigmoid(logits)
-        return probs, logits
 
 
 # Classifier Model -----------------------------------------------

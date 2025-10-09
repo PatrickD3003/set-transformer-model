@@ -4,6 +4,15 @@
 
 このリポジトリは、MoonBoard課題のグレード予測モデルおよび分析ツール一式をまとめたものです。Set Transformer と DeepSet を中心とした順序不変アーキテクチャを PyTorch で実装し、学習・評価・可視化までを Jupyter Notebook ベースで実行できる構成に整理しました。
 
+## Moonboardとは
+MoonBoardは、世界中のクライマーが共通の壁レイアウトで課題を共有・挑戦できる、デジタル対応型トレーニングウォールです。  
+専用アプリと LED システムを組み合わせることで、同じ壁を使って他のユーザーが設定した課題をリアルタイムで再現・挑戦することができます。
+
+
+## データの構造
+{"problem_name": 課題名, "grade": 難易度, "holds":使われるホールド, "benchmark": trueかfalse, "constraint":制限について, "rated":評価されたことあるかどうか}
+
+
 ### フォルダ構成
 
 - `grade_predictor/`  
@@ -14,8 +23,7 @@
   - `model.py` / `modules*.py` : Set Transformer・DeepSet 実装と学習ロジック
   - `utils_ordinal.py` : オーディナル回帰用のロス・評価ヘルパー
   - `main.ipynb` : 学習・評価のメインノートブック
-- `problem_generator/`  
-  今後の課題生成モジュール用ワークスペース（現在はテンプレートのみ）
+
 
 ### 主な特徴
 
@@ -39,10 +47,12 @@
 
 ### 使い方
 
-1. `grade_predictor/main.ipynb` を開き、データ読込・学習・評価セルを順に実行します。
-2. 学習後のモデル比較結果や混同行列は `grade_predictor/result/` に自動保存されます。
-3. 外れ値調査や追加分析は `grade_predictor/analyze/analyze.ipynb` を利用し、結果を `自己評価.xlsx` に追記してください。
-4. 必要に応じて `modules.py` / `modules_modified.py` を編集し、モデルアーキテクチャをカスタマイズできます。
+1. `grade_predictor/main.ipynb` を開き、上から順にセルを実行してデータ読込・前処理・モデル学習を行います。
+2. "Model Comparison" セクションでは分類モデル群（Set Transformer / DeepSet）の学習と混同行列・精度ログ出力を自動化しています。
+3. "Ordinal variants sweep" セルを実行すると、全オーディナルモデルを一括学習し、閾値精度表と総合精度を `result/ordinal_result.xlsx` に保存します。
+4. 特定モデルのみを試す場合は `ordinal_model_types` のリストを編集してください。
+5. 外れ値調査や追加分析は `grade_predictor/analyze/analyze.ipynb` を利用し、結果を `自己評価.xlsx` に追記してください。
+6. 必要に応じて `modules.py` / `modules_modified.py` / `model.py` を編集し、アーキテクチャやヘッド構成をカスタマイズできます。
 
 ### 出力ファイル
 
@@ -50,5 +60,4 @@
 - `grade_predictor/result/confusion_*.png` : 各モデルの混同行列
 - `grade_predictor/result/outlier.xlsx` : 外れ値候補の一覧
 - `grade_predictor/result/model_comparison_results.xlsx` : 指標まとめ
-
-`problem_generator/` 以下は今後の開発用スペースです。課題生成ロジックを追加する際は、このディレクトリにノートブックやスクリプトを配置してください。
+- `grade_predictor/result/ordinal_result.xlsx` : オーディナルモデルの閾値精度マトリクスと総合精度

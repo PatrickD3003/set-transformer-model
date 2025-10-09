@@ -69,3 +69,16 @@ class PMA(nn.Module):
 
     def forward(self, X):
         return self.mab(self.S.repeat(X.size(0), 1, 1), X)
+
+
+class OrdinalHead(nn.Module):
+    def __init__(self, in_dim: int, num_classes: int):
+        super().__init__()
+        if num_classes < 2:
+            raise ValueError("Ordinal head requires at least two classes")
+        self.fc = nn.Linear(in_dim, num_classes - 1)
+
+    def forward(self, features):
+        logits = self.fc(features)
+        probs = torch.sigmoid(logits)
+        return probs, logits
