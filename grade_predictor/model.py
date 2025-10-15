@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import json
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
 import os
@@ -15,6 +16,7 @@ import openpyxl
 
 # --- set transformer model ---
 class SetTransformerClassifierXY(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
 
@@ -42,6 +44,7 @@ class SetTransformerClassifierXY(nn.Module):
 
 # revised set transformer, embedding for type + XY
 class SetTransformerClassifierXYAdditive(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
         # (1) hold ID → embedding
@@ -94,6 +97,7 @@ class SetTransformerClassifierXYAdditive(nn.Module):
     
 # --- deepset model ---
 class DeepSetClassifierXY(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
 
@@ -127,6 +131,7 @@ class DeepSetClassifierXY(nn.Module):
     
     
 class DeepSetClassifierXYAdditive(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
         # (1) hold ID → embedding
@@ -186,6 +191,7 @@ class DeepSetClassifierXYAdditive(nn.Module):
 
 # --- set transformer model ---
 class SetTransformerClassifier(nn.Module):
+    expects_tuple_input = False
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8):
         super().__init__()
         
@@ -208,6 +214,7 @@ class SetTransformerClassifier(nn.Module):
     
 # --- deepset model ---
 class DeepSetClassifier(nn.Module):
+    expects_tuple_input = False
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8):
         super().__init__()
 
@@ -235,9 +242,111 @@ class DeepSetClassifier(nn.Module):
         return out
 
 
+class EnsembleClassifier(nn.Module):
+    """
+    Soft-voting ensemble that averages member model probabilities.
+    Each member declares whether it expects tuple inputs via an `expects_tuple_input` attribute.
+    """
+
+    def __init__(self, models, weights=None, freeze_members=True):
+        """
+        Args:
+            models: Mapping[str, nn.Module] or iterable of (name, nn.Module).
+            weights: Optional mapping or iterable of weights aligned with `models`.
+            freeze_members: If True, disable gradient updates on member parameters.
+        """
+        super().__init__()
+
+        if isinstance(models, dict):
+            items = list(models.items())
+        else:
+            items = list(models)
+            if not all(isinstance(item, (tuple, list)) and len(item) == 2 for item in items):
+                raise ValueError("models must be a mapping or iterable of (name, module) pairs.")
+
+        if not items:
+            raise ValueError("At least one base model is required for EnsembleClassifier.")
+
+        self._model_names = [name for name, _ in items]
+        self.models = nn.ModuleDict((name, module) for name, module in items)
+
+        weight_values = self._resolve_weights(weights, self._model_names)
+        self.register_buffer("_weights", weight_values)
+
+        if freeze_members:
+            for module in self.models.values():
+                for param in module.parameters():
+                    param.requires_grad_(False)
+
+        self.is_ensemble = True
+        self.is_ordinal = False
+
+    @staticmethod
+    def _resolve_weights(weights, names):
+        if weights is None:
+            values = torch.ones(len(names), dtype=torch.float32)
+        elif isinstance(weights, dict):
+            try:
+                values = torch.tensor([float(weights[name]) for name in names], dtype=torch.float32)
+            except KeyError as exc:
+                missing = exc.args[0]
+                raise KeyError(f"Missing weight for ensemble member: {missing}") from exc
+        else:
+            values = torch.tensor(list(weights), dtype=torch.float32)
+            if values.numel() != len(names):
+                raise ValueError("weights iterable length must match number of models.")
+
+        total = values.sum()
+        if total <= 0:
+            raise ValueError("Ensemble weights must sum to a positive value.")
+        return values / total
+
+    def _prepare_inputs(self, module, raw_inputs):
+        expects_tuple = getattr(module, "expects_tuple_input", False)
+        if expects_tuple:
+            if not isinstance(raw_inputs, (tuple, list)):
+                raise ValueError(
+                    f"Model {module.__class__.__name__} expects tuple inputs but received {type(raw_inputs)}"
+                )
+            return raw_inputs
+
+        if isinstance(raw_inputs, (tuple, list)):
+            if not raw_inputs:
+                raise ValueError("Received empty inputs when at least the hold indices tensor is required.")
+            return raw_inputs[0]
+        return raw_inputs
+
+    def forward(self, inputs):
+        tuple_inputs = tuple(inputs) if isinstance(inputs, list) else inputs
+
+        weighted_prob = None
+        for idx, module in enumerate(self.models.values()):
+            prepared = self._prepare_inputs(module, tuple_inputs)
+            outputs = module(prepared)
+
+            if isinstance(outputs, tuple):
+                logits = outputs[1] if len(outputs) > 1 else outputs[0]
+            else:
+                logits = outputs
+
+            probs = F.softmax(logits, dim=-1)
+            weight = self._weights[idx]
+            contrib = probs * weight
+            weighted_prob = contrib if weighted_prob is None else weighted_prob + contrib
+
+        avg_prob = weighted_prob
+        avg_logits = torch.log(avg_prob.clamp_min(1e-12))
+        return avg_prob, avg_logits
+
+    def predict(self, inputs):
+        probs, _ = self.forward(inputs)
+        return probs.argmax(dim=-1)
+
+
 # Ordinal Models -------------------------------------------------
 
 class SetTransformerOrdinalXY(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, dim_in)
@@ -265,6 +374,7 @@ class SetTransformerOrdinalXY(nn.Module):
 
 
 class SetTransformerOrdinalXYAdditive(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
         self.hold_emb = nn.Embedding(vocab_size, feat_dim)
@@ -304,6 +414,7 @@ class SetTransformerOrdinalXYAdditive(nn.Module):
 
 
 class SetTransformerOrdinal(nn.Module):
+    expects_tuple_input = False
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, dim_in)
@@ -327,6 +438,7 @@ class SetTransformerOrdinal(nn.Module):
 
 
 class DeepSetOrdinalXY(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, dim_in)
@@ -356,6 +468,7 @@ class DeepSetOrdinalXY(nn.Module):
 
 
 class DeepSetOrdinalXYAdditive(nn.Module):
+    expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
         self.hold_emb = nn.Embedding(vocab_size, feat_dim)
@@ -397,6 +510,7 @@ class DeepSetOrdinalXYAdditive(nn.Module):
 
 
 class DeepSetOrdinal(nn.Module):
+    expects_tuple_input = False
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, dim_in)

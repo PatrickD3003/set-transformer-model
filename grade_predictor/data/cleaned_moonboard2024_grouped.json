@@ -5668,8 +5668,8 @@
 {"problem_name": "1AM FOND OF PIGS", "grade": "V5", "holds": ["I18", "D16", "G9", "D11", "G14", "E9", "I4", "H4", "I4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "PAPER PLANE", "grade": "V5", "holds": ["F18", "F18", "B4", "C7", "D14", "C15", "E9", "C12", "C15", "H5", "G4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "BUSINESS MONKEY", "grade": "V5", "holds": ["F18", "G12", "C14", "E9", "C14", "H5"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
-{"problem_name": "EASY! 9", "grade": "V5", "holds": ["I18", "E12", "A2", "G15", "I12", "K8", "J17", "E9", "E9", "J17", "D5", "F6", "F6"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
-{"problem_name": "TURN AROUND AND LOOK OUT", "grade": "V5", "holds": ["C18", "F16", "F14", "K7", "K8", "J11", "K11", "I4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
+{"problem_name": "EASY! 9", "grade": "V5", "holds": ["I18", "E12", "A2", "G15", "I12", "K8", "J17", "E9", "E9", "J17", "D5", "F6", "F6"], "benchmark": false}
+{"problem_name": "SWEATY TIPS'S SPAN TESTER Q", "grade": "V8", "holds": ["I18", "J15", "I9", "E9", "H4", "D5"], "benchmark": false}
 {"problem_name": "TURN AROUND AND LOOK OUT", "grade": "V5", "holds": ["C18", "F16", "F14", "K7", "K8", "J11", "K11", "I4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "LOVE ME 9", "grade": "V5", "holds": ["F18", "A9", "B10", "A13", "E8", "D14", "A16", "D14", "G3", "D4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "HARD OVER EASY", "grade": "V5", "holds": ["C18", "F16", "D14", "C10", "K7", "H9", "A7", "H10", "E4", "D14", "H9", "H9", "K5"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
