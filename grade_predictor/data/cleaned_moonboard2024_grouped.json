@@ -7860,7 +7860,6 @@
 {"problem_name": "WRIST RECOVERY", "grade": "V6", "holds": ["C18", "G12", "F16", "I9", "J8", "J5", "F4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "JUST THE END OF THE WORLD", "grade": "V6", "holds": ["G18", "B11", "A8", "F15", "B14", "D5", "A3"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "SADDIC GLADDIC Q", "grade": "V6", "holds": ["C18", "I11", "G15", "G8", "F13", "B11", "G3", "D4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
-{"problem_name": "MINIMALIST STYLE Q", "grade": "V6", "holds": ["J18", "I16", "D16", "D12", "B12"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "PINCH BLOC 9", "grade": "V6", "holds": ["D18", "A5", "B9", "D10", "B14", "D16", "A4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "PATRICK STAR", "grade": "V6", "holds": ["I18", "B7", "G3", "E8", "F11", "I7", "C10", "E16", "B7", "A4"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
 {"problem_name": "SMOKING BROWN", "grade": "V6", "holds": ["A18", "G12", "G11", "D16", "J1", "D14", "H10", "G11", "D14", "H10", "H5"], "benchmark": false, "constraint": "any_marked_holds", "rated": true}
