@@ -9,6 +9,7 @@ import os
 from modules_modified import ISAB, SAB, PMA, OrdinalHead
 import pandas as pd
 import openpyxl
+import warnings
 from typing import Mapping, Iterable, Tuple, List, Union, Optional
 
 
@@ -497,15 +498,37 @@ class BaseEnsemble(nn.Module):
 
     @staticmethod
     def _extract_logits(outputs: TensorLike) -> torch.Tensor:
-        """Pick the first tensor from outputs if it's a tuple; otherwise return outputs."""
+        """Prefer the last tensor from tuple/list outputs (typically logits)."""
         if isinstance(outputs, (tuple, list)):
-            for x in outputs:
-                if isinstance(x, torch.Tensor):
-                    return x
+            tensor_items = [x for x in outputs if isinstance(x, torch.Tensor)]
+            if tensor_items:
+                for candidate in reversed(tensor_items):
+                    if not BaseEnsemble._looks_like_probs(candidate):
+                        return candidate
+                return tensor_items[-1]
             raise ValueError("Model returned a tuple/list without any tensor outputs.")
         if not isinstance(outputs, torch.Tensor):
             raise ValueError(f"Unsupported model output type: {type(outputs)}")
         return outputs
+
+    @staticmethod
+    def _looks_like_probs(tensor: torch.Tensor) -> bool:
+        if not isinstance(tensor, torch.Tensor):
+            return False
+        if tensor.ndim < 2 or tensor.shape[-1] <= 1:
+            return False
+        detached = tensor.detach()
+        if not torch.all(torch.isfinite(detached)).item():
+            return False
+        row_sums = detached.sum(dim=-1)
+        if not torch.allclose(
+            row_sums,
+            torch.ones_like(row_sums),
+            atol=1e-4,
+            rtol=1e-4,
+        ):
+            return False
+        return torch.all((detached >= 0) & (detached <= 1)).item()
 
     @staticmethod
     def _prepare_inputs(module: nn.Module, raw_inputs: TensorLike) -> TensorLike:
@@ -533,7 +556,16 @@ class BaseEnsemble(nn.Module):
             prepared = self._prepare_inputs(module, tuple_inputs)
             outputs = module(prepared)
             logits = self._extract_logits(outputs)
-            probs = F.softmax(logits, dim=-1)
+            use_as_probs = False
+            if logits.ndim >= 2 and logits.shape[-1] > 1:
+                if self._looks_like_probs(logits):
+                    warnings.warn(
+                        f"Ensemble member {module.__class__.__name__} appears to return probabilities; "
+                        "expected raw logits.",
+                        RuntimeWarning,
+                    )
+                    use_as_probs = True
+            probs = logits if use_as_probs else F.softmax(logits, dim=-1)
             probs_list.append(probs)
         # [M, B, C]
         return torch.stack(probs_list, dim=0)
