@@ -594,8 +594,10 @@ class BaseEnsemble(nn.Module):
 
 
 # =========================
-# 1) Soft Voting (Arithmetic Mean)
+# bagging
 # =========================
+
+# 1) Soft Voting (Arithmetic Mean)
 class SoftVotingEnsemble(BaseEnsemble):
     """Weighted arithmetic mean of member probabilities (classic soft voting)."""
     def _combine(self, member_probs: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
@@ -604,9 +606,7 @@ class SoftVotingEnsemble(BaseEnsemble):
         return (member_probs * w).sum(dim=0)  # [B,C]
 
 
-# =========================
 # 2) Geometric Mean
-# =========================
 class GeometricMeanEnsemble(BaseEnsemble):
     """
     Weighted geometric mean of probabilities:
@@ -621,9 +621,7 @@ class GeometricMeanEnsemble(BaseEnsemble):
         return g
 
 
-# =========================
 # 3) Median Ensemble
-# =========================
 class MedianEnsemble(BaseEnsemble):
     """
     Element-wise median of probabilities across members.
@@ -634,9 +632,7 @@ class MedianEnsemble(BaseEnsemble):
         return member_probs.median(dim=0).values  # [B,C]
 
 
-# =========================
 # 4) Trimmed Mean Ensemble
-# =========================
 class TrimmedMeanEnsemble(BaseEnsemble):
     """
     Per-class trimmed mean across members.
@@ -663,8 +659,10 @@ class TrimmedMeanEnsemble(BaseEnsemble):
 
 
 # =========================
-# 5) Stacking Ensemble (meta-learner)
+# stacking
 # =========================
+
+# 1) basic stacking
 class StackingEnsemble(BaseEnsemble):
     """
     Stacking: feed member outputs to a meta-learner.
@@ -737,3 +735,8 @@ class StackingEnsemble(BaseEnsemble):
         logits = self.meta_model(feat)                # [B,C]
         probs = F.softmax(logits, dim=-1)
         return probs, logits
+
+
+# =========================
+# boosting
+# =========================
