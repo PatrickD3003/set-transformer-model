@@ -740,3 +740,17 @@ class StackingEnsemble(BaseEnsemble):
 # =========================
 # boosting
 # =========================
+
+class AdaBoostEnsemble(BaseEnsemble):
+    """
+    Inference-time holder for an AdaBoost-style ensemble.
+    This class is functionally identical to SoftVotingEnsemble at inference time.
+    
+    The 'weights' (alphas) and 'models' (weak learners) are 
+    determined by an external sequential training loop.
+    """
+    def _combine(self, member_probs: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        # member_probs: [M,B,C], weights: [M]
+        w = weights.view(-1, 1, 1)
+        # Weighted arithmetic mean of member probabilities
+        return (member_probs * w).sum(dim=0)  # [B,C]
