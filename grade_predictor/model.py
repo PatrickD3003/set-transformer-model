@@ -807,12 +807,12 @@ class StackingEnsemble(BaseEnsemble):
 
     def forward(self, inputs: TensorLike) -> Tuple[torch.Tensor, torch.Tensor]:
         member_feats = self._member_features(inputs)  # [M,B,F]
-        M, B, F = member_feats.shape
+        M, B, feat_dim = member_feats.shape
 
         if self.combine == "mean":
             feat = member_feats.mean(dim=0)           # [B,F]
         else:
-            feat = member_feats.permute(1, 0, 2).reshape(B, M * F)  # [B, M*F]
+            feat = member_feats.permute(1, 0, 2).reshape(B, M * feat_dim)  # [B, M*F]
 
         logits = self.meta_model(feat)                # [B,C]
         probs = F.softmax(logits, dim=-1)
