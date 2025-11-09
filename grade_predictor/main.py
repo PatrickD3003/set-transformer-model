@@ -784,11 +784,11 @@ def train_stacking_meta_model(stacking_model, dataloader, device, epochs=5, lr=1
             inputs = tuple(x.to(device) for x in X)
             targets = y.to(device)
             member_feats = stacking_model._member_features(inputs)
-            M, B, C = member_feats.shape
+            M, B, F = member_feats.shape
             if stacking_model.combine == "mean":
                 feat = member_feats.mean(dim=0)
             else:
-                feat = member_feats.permute(1, 0, 2).reshape(B, M * C)
+                feat = member_feats.permute(1, 0, 2).reshape(B, M * F)
 
             logits = stacking_model.meta_model(feat)
             loss = criterion(logits, targets)
@@ -826,6 +826,19 @@ def train_tree_meta_model(tree_ensemble, dataloader, device):
     features = np.concatenate(feature_blocks, axis=0)
     targets = np.concatenate(target_blocks, axis=0)
     tree_ensemble.fit_meta_model(features, targets)
+
+def infer_stacking_feature_dim(stacking_model, dataloader, device):
+    """
+    Determine the flattened feature dimension seen by the stacking meta-model.
+    """
+    stacking_model.eval()
+    with torch.no_grad():
+        for X, _ in dataloader:
+            inputs = tuple(x.to(device) for x in X)
+            member_feats = stacking_model._member_features(inputs)
+            M, _, F = member_feats.shape
+            return F if stacking_model.combine == "mean" else M * F
+    raise RuntimeError("Unable to infer stacking feature dimension (empty dataloader?).")
 
 
 def build_ensemble_models(
@@ -885,16 +898,19 @@ def build_ensemble_models(
         elif base_name == "trimmed_mean_ensemble":
             ensemble_model = TrimmedMeanEnsemble(cloned_items, weights=weights, freeze_members=True, trim_frac=0.2).to(device)
         elif base_name == "stacking_ensemble":
-            feature_dim = len(cloned_items) * num_classes
-            meta_model = nn.Linear(feature_dim, num_classes).to(device)
+            placeholder_dim = len(cloned_items) * num_classes
+            meta_model = nn.Linear(placeholder_dim, num_classes).to(device)
             ensemble_model = StackingEnsemble(
                 cloned_items,
                 weights=weights,
                 freeze_members=True,
                 meta_model=meta_model,
-                feature_source="logits",
+                feature_source="logits+internal",
                 combine="concat",
             ).to(device)
+            inferred_dim = infer_stacking_feature_dim(ensemble_model, train_loader, device)
+            if inferred_dim != placeholder_dim:
+                ensemble_model.meta_model = nn.Linear(inferred_dim, num_classes).to(device)
             train_stacking_meta_model(
                 ensemble_model,
                 train_loader,
@@ -1131,4 +1147,3 @@ def compare_models(
 # usage
 for i in range(25):
     compare_models()
-

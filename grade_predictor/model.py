@@ -21,6 +21,8 @@ class SetTransformerClassifierXY(nn.Module):
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
 
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         self.embedding = nn.Embedding(vocab_size, dim_in)  # hold embedding
         input_dim = dim_in + 1 + type_vec_dim + 2  # +1 for difficulty, +2 for (x, y)
 
@@ -41,13 +43,19 @@ class SetTransformerClassifierXY(nn.Module):
         difficulty = difficulty.unsqueeze(-1)           # (B, N, 1)
         x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)  # (B, N, D+1+T+2)
         x_enc = self.encoder(x)
+        self._meta_features = x_enc.mean(dim=1)
         return self.decoder(x_enc)
+    
+    def get_meta_features(self):
+        return self._meta_features
 
 # revised set transformer, embedding for type + XY
 class SetTransformerClassifierXYAdditive(nn.Module):
     expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         # (1) hold ID → embedding
         self.hold_emb   = nn.Embedding(vocab_size, feat_dim)          # (B,N,feat_dim)
         # (2) difficulty (scalar) → linear projection to feat_dim
@@ -94,7 +102,11 @@ class SetTransformerClassifierXYAdditive(nn.Module):
         # Weighted sum
         x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
         x_enc = self.encoder(x)
+        self._meta_features = x_enc.mean(dim=1)
         return self.decoder(x_enc)
+    
+    def get_meta_features(self):
+        return self._meta_features
     
 # --- deepset model ---
 class DeepSetClassifierXY(nn.Module):
@@ -102,6 +114,8 @@ class DeepSetClassifierXY(nn.Module):
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
 
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         self.embedding = nn.Embedding(vocab_size, dim_in)
         input_dim = dim_in + 1 + type_vec_dim + 2  # hold_emb + difficulty + type_vec + (x, y)
 
@@ -128,13 +142,19 @@ class DeepSetClassifierXY(nn.Module):
         x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)  # (B, N, total_input_dim)
         x = self.encoder(x)                            # (B, N, hidden_dim)
         x = x.mean(dim=1)                              # (B, hidden_dim)
+        self._meta_features = x
         return self.decoder(x)                         # (B, num_classes)
+    
+    def get_meta_features(self):
+        return self._meta_features
     
     
 class DeepSetClassifierXYAdditive(nn.Module):
     expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         # (1) hold ID → embedding
         self.hold_emb   = nn.Embedding(vocab_size, feat_dim)           # (B,N,feat_dim)
         # (2) difficulty (scalar) → linear projection to feat_dim
@@ -185,7 +205,11 @@ class DeepSetClassifierXYAdditive(nn.Module):
         # Encode + aggregate
         x = self.encoder(x)       # (B, N, hidden_dim)
         x = x.mean(dim=1)         # (B, hidden_dim)
+        self._meta_features = x
         return self.decoder(x)    # (B, num_classes)
+    
+    def get_meta_features(self):
+        return self._meta_features
 
 
 # -----------------------------------------------Classifier Model Original-----------------------------------------------
@@ -196,6 +220,8 @@ class SetTransformerClassifier(nn.Module):
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8):
         super().__init__()
         
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         self.embedding = nn.Embedding(vocab_size, dim_in)
         self.encoder = nn.Sequential(
             ISAB(dim_in, dim_hidden, num_heads, num_inds, ln=True),
@@ -211,7 +237,11 @@ class SetTransformerClassifier(nn.Module):
         # x: (B, N, dim_in)
         x = self.embedding(x)
         x_enc = self.encoder(x)
+        self._meta_features = x_enc.mean(dim=1)
         return self.decoder(x_enc)
+    
+    def get_meta_features(self):
+        return self._meta_features
     
 # --- deepset model ---
 class DeepSetClassifier(nn.Module):
@@ -219,6 +249,8 @@ class DeepSetClassifier(nn.Module):
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8):
         super().__init__()
 
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         self.embedding = nn.Embedding(vocab_size, dim_in)  # Embed hold indices
 
         self.encoder = nn.Sequential(
@@ -239,8 +271,12 @@ class DeepSetClassifier(nn.Module):
         x = self.embedding(hold_idx)   # (B, N, dim_in)
         x = self.encoder(x)            # (B, N, hidden)
         x = x.mean(dim=1)              # (B, hidden)
+        self._meta_features = x
         out = self.decoder(x)          # (B, num_classes)
         return out
+    
+    def get_meta_features(self):
+        return self._meta_features
 
 
 # -----------------------------------------------Ordinal Models -------------------------------------------------
@@ -667,7 +703,8 @@ class StackingEnsemble(BaseEnsemble):
     """
     Stacking: feed member outputs to a meta-learner.
     - meta_model: nn.Module mapping features -> logits [B,C]
-    - feature_source: 'logits' or 'probs' (what to feed)
+    - feature_source: 'logits', 'probs', 'internal', 'logits+internal', or 'probs+internal'
+                     (internal pulls pooled encoder states from members that expose them)
     - combine: 'concat' (default) to concatenate member features along last dim,
                or 'mean' to average features before meta-model.
 
@@ -684,12 +721,11 @@ class StackingEnsemble(BaseEnsemble):
         weights=None,
         freeze_members=True,
         meta_model: Optional[nn.Module] = None,
-        feature_source: str = "logits",   # 'logits' or 'probs'
+        feature_source: str = "logits",   # 'logits', 'probs', 'internal', 'logits+internal', 'probs+internal'
         combine: str = "concat",          # 'concat' or 'mean'
     ):
         super().__init__(models, weights=weights, freeze_members=freeze_members)
-        if feature_source not in {"logits", "probs"}:
-            raise ValueError("feature_source must be 'logits' or 'probs'.")
+        self._base_feature_mode, self._use_internal = self._parse_feature_source(feature_source)
         if combine not in {"concat", "mean"}:
             raise ValueError("combine must be 'concat' or 'mean'.")
         if meta_model is None:
@@ -698,22 +734,68 @@ class StackingEnsemble(BaseEnsemble):
         self.feature_source = feature_source
         self.combine = combine
 
+    @staticmethod
+    def _parse_feature_source(source: str) -> Tuple[Optional[str], bool]:
+        valid = {
+            "logits": ("logits", False),
+            "probs": ("probs", False),
+            "internal": (None, True),
+            "logits+internal": ("logits", True),
+            "probs+internal": ("probs", True),
+        }
+        if source not in valid:
+            raise ValueError(
+                "feature_source must be one of "
+                "'logits', 'probs', 'internal', 'logits+internal', or 'probs+internal'."
+            )
+        return valid[source]
+
     def _member_features(self, inputs: TensorLike) -> torch.Tensor:
         """
-        Collect either logits or probs per member.
-        Returns [M,B,C]
+        Collect requested features per member.
+        Returns tensor with shape [M,B,F], where F depends on feature_source.
         """
         tuple_inputs = tuple(inputs) if isinstance(inputs, list) else inputs
         feats = []
-        for module in self.models.values():
+        for name, module in self.models.items():
             prepared = self._prepare_inputs(module, tuple_inputs)
             out = module(prepared)
             logits = self._extract_logits(out)
-            if self.feature_source == "probs":
-                feats.append(F.softmax(logits, dim=-1))
-            else:
-                feats.append(logits)
-        return torch.stack(feats, dim=0)  # [M,B,C]
+            blocks = []
+            if self._base_feature_mode == "probs":
+                blocks.append(F.softmax(logits, dim=-1))
+            elif self._base_feature_mode == "logits":
+                blocks.append(logits)
+
+            if self._use_internal:
+                extra_dim = int(getattr(module, "meta_feature_dim", 0))
+                extractor = getattr(module, "get_meta_features", None)
+                if extra_dim <= 0 or extractor is None:
+                    raise ValueError(
+                        f"Model '{name}' does not expose encoder features "
+                        f"required by feature_source='{self.feature_source}'."
+                    )
+                internal_feat = extractor()
+                if internal_feat is None:
+                    raise RuntimeError(
+                        f"Model '{name}' failed to cache encoder features for stacking. "
+                        "Ensure its forward method stores them before returning."
+                    )
+                if internal_feat.ndim > 2:
+                    internal_feat = internal_feat.reshape(internal_feat.shape[0], -1)
+                if internal_feat.shape[-1] != extra_dim:
+                    raise ValueError(
+                        f"Model '{name}' reported meta_feature_dim={extra_dim} "
+                        f"but produced features with size {internal_feat.shape[-1]}."
+                    )
+                blocks.append(internal_feat)
+
+            if not blocks:
+                raise RuntimeError(
+                    f"feature_source '{self.feature_source}' produced no features for model '{name}'."
+                )
+            feats.append(blocks[0] if len(blocks) == 1 else torch.cat(blocks, dim=-1))
+        return torch.stack(feats, dim=0)  # [M,B,F]
 
     def _combine(self, member_probs: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         """
@@ -724,13 +806,13 @@ class StackingEnsemble(BaseEnsemble):
         return (member_probs * w).sum(dim=0)
 
     def forward(self, inputs: TensorLike) -> Tuple[torch.Tensor, torch.Tensor]:
-        member_feats = self._member_features(inputs)  # [M,B,C]
-        M, B, C = member_feats.shape
+        member_feats = self._member_features(inputs)  # [M,B,F]
+        M, B, F = member_feats.shape
 
         if self.combine == "mean":
-            feat = member_feats.mean(dim=0)           # [B,C]
+            feat = member_feats.mean(dim=0)           # [B,F]
         else:
-            feat = member_feats.permute(1, 0, 2).reshape(B, M * C)  # [B, M*C]
+            feat = member_feats.permute(1, 0, 2).reshape(B, M * F)  # [B, M*F]
 
         logits = self.meta_model(feat)                # [B,C]
         probs = F.softmax(logits, dim=-1)
