@@ -43,19 +43,7 @@ from sklearn.utils.class_weight import compute_class_weight
 
 
 # import models
-from model import (
-    SetTransformerClassifierXY,
-    SetTransformerClassifierXYAdditive,
-    SetTransformerClassifier,
-    DeepSetClassifierXYAdditive,
-    DeepSetClassifierXY,
-    DeepSetClassifier,
-    SetTransformerOrdinalXY,
-    SetTransformerOrdinalXYAdditive,
-    SetTransformerOrdinal,
-    DeepSetOrdinalXYAdditive,
-    DeepSetOrdinalXY,
-    DeepSetOrdinal,
+from grade_predictor.models.ensemble import (
     SoftVotingEnsemble,
     GeometricMeanEnsemble,
     MedianEnsemble,
@@ -66,6 +54,25 @@ from model import (
     XGBoostEnsemble,
     LightGBMEnsemble,
 )
+
+from grade_predictor.models.classifier import (
+    SetTransformerClassifierXY,
+    SetTransformerClassifierXYAdditive,
+    SetTransformerClassifier,
+    DeepSetClassifierXYAdditive,
+    DeepSetClassifierXY,
+    DeepSetClassifier,
+)
+
+from grade_predictor.models.ordinal import (
+    SetTransformerOrdinalXY,
+    SetTransformerOrdinalXYAdditive,
+    SetTransformerOrdinal,
+    DeepSetOrdinalXYAdditive,
+    DeepSetOrdinalXY,
+    DeepSetOrdinal,
+)
+
 from utils_ordinal import ordinal_logistic_loss, cumulative_to_labels, threshold_accuracy
 
 
