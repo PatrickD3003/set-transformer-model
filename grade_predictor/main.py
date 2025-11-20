@@ -27,6 +27,7 @@ import torch
 import numpy as np
 import json
 import copy
+from collections import defaultdict
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
@@ -1043,10 +1044,10 @@ def compare_models(
 
         results.append({
             "Model Type": mtype,
-            "Train Strict Accuracy (%)": round(train_strict_acc, 2),
-            "Train ±1 Grade Accuracy (%)": round(train_loose_acc, 2),
-            "Val Strict Accuracy (%)": round(val_strict_acc, 2),
-            "Val ±1 Grade Accuracy (%)": round(val_loose_acc, 2),
+            "Train Strict Accuracy (%)": train_strict_acc,
+            "Train ±1 Grade Accuracy (%)": train_loose_acc,
+            "Val Strict Accuracy (%)": val_strict_acc,
+            "Val ±1 Grade Accuracy (%)": val_loose_acc,
         })
 
         if idx == 0:
@@ -1124,10 +1125,10 @@ def compare_models(
 
                     results.append({
                         "Model Type": name,
-                        "Train Strict Accuracy (%)": round(train_strict_acc, 2),
-                        "Train ±1 Grade Accuracy (%)": round(train_loose_acc, 2),
-                        "Val Strict Accuracy (%)": round(val_strict_acc, 2),
-                        "Val ±1 Grade Accuracy (%)": round(val_loose_acc, 2),
+                        "Train Strict Accuracy (%)": train_strict_acc,
+                        "Train ±1 Grade Accuracy (%)": train_loose_acc,
+                        "Val Strict Accuracy (%)": val_strict_acc,
+                        "Val ±1 Grade Accuracy (%)": val_loose_acc,
                     })
 
                     save_confusion_matrix_to_excel(y_true, y_pred, class_labels, name, excel_path)
@@ -1142,16 +1143,87 @@ def compare_models(
                     )
 
     df_results = pd.DataFrame(results)
+    df_results_rounded = df_results.round(2)
     with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df_results.to_excel(writer, sheet_name="Summary", index=False)
+        df_results_rounded.to_excel(writer, sheet_name="Summary", index=False)
     print("=== Model Comparison Summary ===")
-    print(df_results)
+    print(df_results_rounded)
+    return results
+
+
+def summarize_accuracy_stability(
+    all_results,
+    excel_path="result/model_comparison_results.xlsx",
+    sheet_name="Stability",
+):
+    """
+    Aggregate per-model accuracy metrics across multiple runs and compute
+    mean/std statistics to highlight training instability.
+    """
+    if not all_results:
+        print("No accuracy records collected; skipping stability summary.")
+        return pd.DataFrame()
+
+    metric_keys = [
+        ("Train Strict Accuracy (%)", "Train Strict"),
+        ("Train ±1 Grade Accuracy (%)", "Train ±1 Grade"),
+        ("Val Strict Accuracy (%)", "Val Strict"),
+        ("Val ±1 Grade Accuracy (%)", "Val ±1 Grade"),
+    ]
+    aggregated = defaultdict(lambda: {key: [] for key, _ in metric_keys})
+    for record in all_results:
+        model_name = record.get("Model Type")
+        if not model_name:
+            continue
+        target = aggregated[model_name]
+        for key, _ in metric_keys:
+            value = record.get(key)
+            if value is not None:
+                target[key].append(float(value))
+
+    summary_rows = []
+    for model_name, metric_lists in aggregated.items():
+        row = {"Model Type": model_name}
+        for key, label in metric_keys:
+            values = metric_lists.get(key, [])
+            if not values:
+                continue
+            row[f"{label} Mean (%)"] = float(np.mean(values))
+            if len(values) > 1:
+                row[f"{label} Std (%)"] = float(np.std(values, ddof=1))
+            else:
+                row[f"{label} Std (%)"] = 0.0
+        summary_rows.append(row)
+
+    if not summary_rows:
+        print("Accuracy records contained no numeric values; skipping stability summary.")
+        return pd.DataFrame()
+
+    summary_df = pd.DataFrame(summary_rows).sort_values("Model Type")
+    summary_df_rounded = summary_df.round(3)
+    with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        summary_df_rounded.to_excel(writer, sheet_name=sheet_name, index=False)
+    print("=== Accuracy Stability Summary ===")
+    print(summary_df_rounded)
+    return summary_df_rounded
+
+
+def run_multiple_iterations(num_iterations=25, **compare_kwargs):
+    """
+    Execute `compare_models` multiple times and report aggregated accuracy statistics.
+    """
+    all_results = []
+    for i in range(num_iterations):
+        print(f"------------------------------------iteration no {i+1}------------------------------------")
+        iteration_results = compare_models(**compare_kwargs)
+        if iteration_results:
+            all_results.extend(iteration_results)
+    summarize_accuracy_stability(all_results)
 
 
 # In[12]:
 
 
 # usage
-for i in range(25):
-    print(f"------------------------------------iteration no {i+1}------------------------------------")
-    compare_models()
+if __name__ == "__main__":
+    run_multiple_iterations(num_iterations=25)
