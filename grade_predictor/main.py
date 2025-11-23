@@ -20,7 +20,6 @@ except ImportError:
 # import modules
 import torch    
 
-
 # In[2]:
 
 
@@ -33,7 +32,7 @@ from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
 import os
 import csv
-from modules_modified import ISAB, SAB, PMA
+from models.modules_modified import ISAB, SAB, PMA
 import pandas as pd
 
 from sklearn.model_selection import train_test_split
@@ -44,7 +43,7 @@ from sklearn.utils.class_weight import compute_class_weight
 
 
 # import models
-from grade_predictor.models.ensemble import (
+from models.ensemble import (
     SoftVotingEnsemble,
     GeometricMeanEnsemble,
     MedianEnsemble,
@@ -56,7 +55,7 @@ from grade_predictor.models.ensemble import (
     LightGBMEnsemble,
 )
 
-from grade_predictor.models.classifier import (
+from models.classifier import (
     SetTransformerClassifierXY,
     SetTransformerClassifierXYAdditive,
     SetTransformerClassifier,
@@ -65,7 +64,7 @@ from grade_predictor.models.classifier import (
     DeepSetClassifier,
 )
 
-from grade_predictor.models.ordinal import (
+from models.ordinal import (
     SetTransformerOrdinalXY,
     SetTransformerOrdinalXYAdditive,
     SetTransformerOrdinal,

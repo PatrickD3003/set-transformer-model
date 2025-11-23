@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
 import os
-from ..modules_modified import ISAB, SAB, PMA, OrdinalHead
+from .modules_modified import ISAB, SAB, PMA, OrdinalHead
 import pandas as pd
 import openpyxl
 import warnings
