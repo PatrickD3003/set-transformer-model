@@ -1,45 +1,32 @@
 #!/usr/bin/env python
 # coding: utf-8
-# In[15]:
-try:
-    import xgboost
-    print("XGBoost version:", xgboost.__version__)
-except ImportError:
-    print("XGBoost not installed")
 
-try:
-    import lightgbm
-    print("LightGBM version:", lightgbm.__version__)
-except ImportError:
-    print("LightGBM not installed")
-
-
-# In[1]:
+# In[ ]:
 
 
 # import modules
 import torch    
 
-# In[2]:
+
+# In[ ]:
 
 
 import numpy as np
 import json
 import copy
-from collections import defaultdict
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
 import os
 import csv
-from models.modules_modified import ISAB, SAB, PMA
+from grade_predictor.models.modules_modified import ISAB, SAB, PMA
 import pandas as pd
 
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
 
-# In[3]:
+# In[ ]:
 
 
 # import models
@@ -71,12 +58,21 @@ from models.ordinal import (
     DeepSetOrdinalXYAdditive,
     DeepSetOrdinalXY,
     DeepSetOrdinal,
+    OrdinalSoftVotingEnsemble,
+    OrdinalGeometricMeanEnsemble,
+    OrdinalMedianEnsemble,
+    OrdinalTrimmedMeanEnsemble,
+    OrdinalStackingEnsemble,
+    OrdinalGBMEnsemble,
+    OrdinalXGBoostEnsemble,
+    OrdinalLightGBMEnsemble,
+    OrdinalAdaBoostEnsemble,
 )
 
 from utils_ordinal import ordinal_logistic_loss, cumulative_to_labels, threshold_accuracy
 
 
-# In[4]:
+# In[ ]:
 
 
 # Mappings --------------------------------------------------------
@@ -92,7 +88,7 @@ label_to_grade = {v: k for k, v in grade_to_label.items()}
 print(hold_to_idx)
 
 
-# In[5]:
+# In[ ]:
 
 
 # Holds difficulty data --------------------------------------------------------
@@ -117,7 +113,7 @@ type_to_idx = {t: i for i, t in enumerate(sorted(unique_types))}
 print(f"successfully prepare type vocabulary")
 
 
-# In[6]:
+# In[ ]:
 
 
 # assign x,y position to each holds -------------------------------
@@ -140,7 +136,7 @@ print("successfully created (x,y) position to each hold:")
 print(hold_to_coord)
 
 
-# In[7]:
+# In[ ]:
 
 
 class MoonBoardDataset(Dataset):
@@ -192,7 +188,7 @@ class MoonBoardDataset(Dataset):
         }, torch.tensor(self.grade_to_label[item['grade']], dtype=torch.long)
 
 
-# In[8]:
+# In[ ]:
 
 
 from torch.utils.data import WeightedRandomSampler
@@ -498,7 +494,7 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
     return train_eval_loader, val_loader, final_ensemble, dataset, train_idx, val_idx
 
 
-# In[9]:
+# In[ ]:
 
 
 import matplotlib.pyplot as plt
@@ -771,7 +767,7 @@ def log_accuracy_to_csv(model_type, train_strict_acc, train_loose_acc, val_stric
         ])
 
 
-# In[10]:
+# In[ ]:
 
 
 def train_stacking_meta_model(stacking_model, dataloader, device, epochs=5, lr=1e-3):
@@ -980,7 +976,7 @@ def build_ensemble_models(
     return ensembles
 
 
-# In[11]:
+# In[ ]:
 
 
 def compare_models(
@@ -1220,9 +1216,400 @@ def run_multiple_iterations(num_iterations=25, **compare_kwargs):
     summarize_accuracy_stability(all_results)
 
 
-# In[12]:
+# In[ ]:
 
 
 # usage
 if __name__ == "__main__":
     run_multiple_iterations(num_iterations=25)
+
+
+# In[ ]:
+
+
+# Ordinal evaluation helpers
+def evaluate_ordinal_thresholds(model, loader, grade_to_label, device, decision_threshold=0.5, model_name=None, output_dir='./result'):
+    model.eval()
+    probs_list = []
+    targets_list = []
+    with torch.no_grad():
+        for X, y in loader:
+            inputs = tuple(x.to(device) for x in X)
+            y = y.to(device)
+            payload = inputs[0] if len(inputs) == 1 else inputs
+            outputs = model(payload)
+            if not isinstance(outputs, tuple):
+                raise ValueError('Model is not configured for ordinal outputs.')
+            probs, logits = outputs
+            probs_list.append(probs.cpu())
+            targets_list.append(y.cpu())
+    if not probs_list:
+        raise ValueError('No samples available for ordinal evaluation.')
+    probs = torch.cat(probs_list, dim=0)
+    targets = torch.cat(targets_list, dim=0)
+    acc_per_threshold = threshold_accuracy(probs, targets, threshold=decision_threshold).cpu()
+    grade_by_label = {v: k for k, v in grade_to_label.items()}
+    threshold_labels = []
+    for idx in range(acc_per_threshold.size(0)):
+        grade = grade_by_label.get(idx, f'label_{idx}')
+        threshold_labels.append(f"P(>{grade})")
+    df = pd.DataFrame({
+        'threshold': threshold_labels,
+        'accuracy': (acc_per_threshold.numpy() * 100).round(2)
+    })
+    overall_pred = cumulative_to_labels(probs, threshold=decision_threshold)
+    overall_acc = (overall_pred == targets).float().mean().item() * 100
+    if model_name:
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f'ordinal_metrics_{model_name}.csv')
+        df.to_csv(output_path, index=False)
+        print(f'Saved threshold table to {output_path}')
+    print(df)
+    print(f'Overall accuracy: {overall_acc:.2f}%')
+    return df, overall_acc
+
+
+
+# In[ ]:
+
+
+# --- Ordinal ensembles and multi-run utilities ---
+ORDINAL_BASE_MODEL_TYPES = [
+    'set_transformer_ordinal',
+    'set_transformer_ordinal_xy',
+    'set_transformer_ordinal_xy_additive',
+    'deepset_ordinal',
+    'deepset_ordinal_xy',
+    'deepset_ordinal_xy_additive',
+]
+
+ORDINAL_ENSEMBLE_TYPES = [
+    'ordinal_soft_voting_ensemble',
+    'ordinal_geometric_mean_ensemble',
+    'ordinal_median_ensemble',
+    'ordinal_trimmed_mean_ensemble',
+    'ordinal_stacking_ensemble',
+    'ordinal_gbm_ensemble',
+    'ordinal_xgboost_ensemble',
+    'ordinal_lightgbm_ensemble',
+    'ordinal_adaboost_ensemble',
+]
+
+
+def train_ordinal_stacking_meta_model(stacking_model, dataloader, device, epochs=5, lr=1e-3):
+    if epochs <= 0:
+        return
+    stacking_model.meta_model.train()
+    for member in stacking_model.models.values():
+        member.eval()
+    optimizer = torch.optim.Adam(stacking_model.meta_model.parameters(), lr=lr)
+    for epoch in range(epochs):
+        total_loss = 0.0
+        total_samples = 0
+        for X, y in dataloader:
+            inputs = tuple(x.to(device) for x in X)
+            targets = y.to(device)
+            _, logits = stacking_model(inputs)
+            loss = ordinal_logistic_loss(logits, targets)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            batch_size = targets.size(0)
+            total_loss += loss.item() * batch_size
+            total_samples += batch_size
+        if total_samples > 0:
+            avg_loss = total_loss / total_samples
+            print(f"Ordinal stacking meta epoch {epoch + 1}: loss={avg_loss:.4f}")
+    stacking_model.meta_model.eval()
+
+
+def infer_ordinal_stacking_feature_dim(stacking_model, dataloader, device):
+    stacking_model.eval()
+    with torch.no_grad():
+        for X, _ in dataloader:
+            inputs = tuple(x.to(device) for x in X)
+            member_feats = stacking_model._member_features(inputs)
+            M, _, F = member_feats.shape
+            return F if stacking_model.combine == 'mean' else M * F
+    raise RuntimeError('Unable to infer ordinal stacking feature dimension.')
+
+
+def train_ordinal_tree_meta_model(tree_ensemble, dataloader, device):
+    tree_ensemble.eval()
+    for member in tree_ensemble.models.values():
+        member.eval()
+    feature_blocks = []
+    target_blocks = []
+    with torch.no_grad():
+        for X, y in dataloader:
+            inputs = tuple(x.to(device) for x in X)
+            member_feats = tree_ensemble._member_features(inputs)
+            feat = tree_ensemble._build_feature_matrix(member_feats)
+            feature_blocks.append(feat.detach().cpu().numpy())
+            target_blocks.append(y.detach().cpu().numpy())
+    if not feature_blocks:
+        raise RuntimeError('No data available to fit ordinal tree-based meta learner.')
+    features = np.concatenate(feature_blocks, axis=0)
+    targets = np.concatenate(target_blocks, axis=0)
+    tree_ensemble.fit_meta_model(features, targets)
+
+
+def build_ordinal_ensemble_models(
+    ensemble_names,
+    base_model_items,
+    num_classes,
+    device,
+    train_loader,
+    stacking_meta_epochs=5,
+    stacking_meta_lr=1e-3,
+    ensemble_weights=None,
+    label_suffix='',
+):
+    ensembles = {}
+    base_items = list(base_model_items)
+    if not base_items:
+        return ensembles
+
+    def _resolve_group_weights(items):
+        if ensemble_weights is None:
+            return None
+        if isinstance(ensemble_weights, dict):
+            filtered = {name: ensemble_weights[name] for name, _ in items if name in ensemble_weights}
+            if len(filtered) != len(items):
+                missing = [name for name, _ in items if name not in filtered]
+                if missing:
+                    print(f"Warning: missing weights for {missing}; using uniform weights.")
+                return None
+            return filtered
+        weight_list = list(ensemble_weights)
+        if len(weight_list) != len(items):
+            print('Warning: weight list length mismatch; using uniform weights.')
+            return None
+        return weight_list
+
+    resolved_weights = _resolve_group_weights(base_items)
+
+    for base_name in ensemble_names:
+        cloned_items = [(name, copy.deepcopy(model)) for name, model in base_items]
+        if not cloned_items:
+            continue
+
+        weights = resolved_weights
+        if isinstance(weights, list):
+            weights = list(weights)
+
+        ensemble_key = f"{base_name}{label_suffix}" if label_suffix else base_name
+
+        if base_name == 'ordinal_soft_voting_ensemble':
+            ensemble_model = OrdinalSoftVotingEnsemble(cloned_items, weights=weights, freeze_members=True).to(device)
+        elif base_name == 'ordinal_geometric_mean_ensemble':
+            ensemble_model = OrdinalGeometricMeanEnsemble(cloned_items, weights=weights, freeze_members=True).to(device)
+        elif base_name == 'ordinal_median_ensemble':
+            ensemble_model = OrdinalMedianEnsemble(cloned_items, weights=weights, freeze_members=True).to(device)
+        elif base_name == 'ordinal_trimmed_mean_ensemble':
+            ensemble_model = OrdinalTrimmedMeanEnsemble(cloned_items, weights=weights, freeze_members=True, trim_frac=0.2).to(device)
+        elif base_name == 'ordinal_stacking_ensemble':
+            placeholder_dim = max(1, len(cloned_items) * (num_classes - 1))
+            meta_model = nn.Linear(placeholder_dim, num_classes - 1).to(device)
+            ensemble_model = OrdinalStackingEnsemble(
+                cloned_items,
+                num_classes=num_classes,
+                weights=weights,
+                freeze_members=True,
+                meta_model=meta_model,
+                feature_source='logits',
+                combine='concat',
+            ).to(device)
+            inferred_dim = infer_ordinal_stacking_feature_dim(ensemble_model, train_loader, device)
+            if inferred_dim != placeholder_dim:
+                ensemble_model.meta_model = nn.Linear(inferred_dim, num_classes - 1).to(device)
+            train_ordinal_stacking_meta_model(
+                ensemble_model,
+                train_loader,
+                device,
+                epochs=stacking_meta_epochs,
+                lr=stacking_meta_lr,
+            )
+        elif base_name == 'ordinal_gbm_ensemble':
+            try:
+                ensemble_model = OrdinalGBMEnsemble(
+                    cloned_items,
+                    num_classes=num_classes,
+                    weights=weights,
+                    freeze_members=True,
+                    feature_source='logits',
+                    combine='concat',
+                ).to(device)
+            except ImportError as exc:
+                print(f"Skipping {base_name}: {exc}")
+                continue
+            train_ordinal_tree_meta_model(ensemble_model, train_loader, device)
+        elif base_name == 'ordinal_xgboost_ensemble':
+            try:
+                ensemble_model = OrdinalXGBoostEnsemble(
+                    cloned_items,
+                    num_classes=num_classes,
+                    weights=weights,
+                    freeze_members=True,
+                    feature_source='logits',
+                    combine='concat',
+                ).to(device)
+            except ImportError as exc:
+                print(f"Skipping {base_name}: {exc}")
+                continue
+            train_ordinal_tree_meta_model(ensemble_model, train_loader, device)
+        elif base_name == 'ordinal_lightgbm_ensemble':
+            try:
+                ensemble_model = OrdinalLightGBMEnsemble(
+                    cloned_items,
+                    num_classes=num_classes,
+                    weights=weights,
+                    freeze_members=True,
+                    feature_source='logits',
+                    combine='concat',
+                ).to(device)
+            except ImportError as exc:
+                print(f"Skipping {base_name}: {exc}")
+                continue
+            train_ordinal_tree_meta_model(ensemble_model, train_loader, device)
+        elif base_name == 'ordinal_adaboost_ensemble':
+            ensemble_model = OrdinalAdaBoostEnsemble(cloned_items, weights=weights, freeze_members=True).to(device)
+        else:
+            print(f"Unknown ordinal ensemble type '{base_name}', skipping.")
+            continue
+
+        ensemble_model.eval()
+        ensembles[ensemble_key] = ensemble_model
+
+    return ensembles
+
+
+def run_ordinal_iterations(
+    ordinal_model_types=None,
+    ordinal_ensemble_types=None,
+    num_iterations=25,
+    decision_threshold=0.5,
+    stacking_meta_epochs=5,
+    stacking_meta_lr=1e-3,
+    ensemble_weights=None,
+    output_excel='./result/ordinal_result.xlsx',
+):
+    ordinal_model_types = ordinal_model_types or ORDINAL_BASE_MODEL_TYPES
+    ordinal_ensemble_types = ordinal_ensemble_types or ORDINAL_ENSEMBLE_TYPES
+    threshold_records = []
+    summary_records = []
+
+    for iteration in range(num_iterations):
+        print(f"----------------- Ordinal iteration {iteration + 1}/{num_iterations} -----------------")
+        trained_base_models = {}
+        base_dataset = None
+        base_train_idx = None
+        base_val_idx = None
+        num_classes = None
+
+        def record_metrics(model_name, table, overall_acc):
+            for _, row in table.iterrows():
+                threshold_records.append({
+                    'iteration': iteration + 1,
+                    'model': model_name,
+                    'threshold': row['threshold'],
+                    'accuracy': float(row['accuracy']),
+                })
+            summary_records.append({
+                'iteration': iteration + 1,
+                'model': model_name,
+                'overall_accuracy': float(overall_acc),
+            })
+
+        for model_key in ordinal_model_types:
+            print(f"=== Training ordinal model: {model_key} ===")
+            train_loader, val_loader, model, dataset, train_idx, val_idx = main(model_key)
+            trained_base_models[model_key] = model
+            if base_dataset is None:
+                base_dataset = dataset
+                base_train_idx = train_idx
+                base_val_idx = val_idx
+            if num_classes is None:
+                num_classes = getattr(model, 'num_classes', len(grade_to_label))
+
+            table, overall_acc = evaluate_ordinal_thresholds(
+                model,
+                val_loader,
+                grade_to_label=grade_to_label,
+                device=device,
+                decision_threshold=decision_threshold,
+                model_name=None,
+            )
+            record_metrics(model_key, table, overall_acc)
+
+        if ordinal_ensemble_types and trained_base_models:
+            if base_dataset is None or base_train_idx is None or base_val_idx is None:
+                raise RuntimeError('Dataset indices unavailable for ordinal ensembles.')
+            collate_fn = make_collate_fn('set_transformer_xy')
+            train_subset = Subset(base_dataset, base_train_idx)
+            val_subset = Subset(base_dataset, base_val_idx)
+            ensemble_train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+            ensemble_val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
+            base_items = list(trained_base_models.items())
+            ensembles = build_ordinal_ensemble_models(
+                ordinal_ensemble_types,
+                base_items,
+                num_classes=num_classes or len(grade_to_label),
+                device=device,
+                train_loader=ensemble_train_loader,
+                stacking_meta_epochs=stacking_meta_epochs,
+                stacking_meta_lr=stacking_meta_lr,
+                ensemble_weights=ensemble_weights,
+            )
+
+            for name, ensemble_model in ensembles.items():
+                table, overall_acc = evaluate_ordinal_thresholds(
+                    ensemble_model,
+                    ensemble_val_loader,
+                    grade_to_label=grade_to_label,
+                    device=device,
+                    decision_threshold=decision_threshold,
+                    model_name=None,
+                )
+                record_metrics(name, table, overall_acc)
+
+    if not summary_records:
+        print('No ordinal evaluations were executed.')
+        return None
+
+    threshold_df = pd.DataFrame(threshold_records)
+    summary_df = pd.DataFrame(summary_records)
+
+    threshold_agg = (threshold_df.groupby(['model', 'threshold'])['accuracy']
+                     .agg(['mean', 'std'])
+                     .reset_index()
+                     .rename(columns={'mean': 'accuracy_mean', 'std': 'accuracy_std'}))
+    summary_agg = (summary_df.groupby('model')['overall_accuracy']
+                   .agg(['mean', 'std'])
+                   .reset_index()
+                   .rename(columns={'mean': 'overall_accuracy_mean', 'std': 'overall_accuracy_std'}))
+
+    output_dir = os.path.dirname(output_excel)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
+        threshold_df.to_excel(writer, sheet_name='threshold_iterations', index=False)
+        summary_df.to_excel(writer, sheet_name='overall_iterations', index=False)
+        threshold_agg.to_excel(writer, sheet_name='threshold_avg', index=False)
+        summary_agg.to_excel(writer, sheet_name='overall_avg', index=False)
+    print(f"Saved aggregated ordinal results to {output_excel}")
+    print(summary_agg.sort_values('model'))
+    return {
+        'threshold_iterations': threshold_df,
+        'overall_iterations': summary_df,
+        'threshold_summary': threshold_agg,
+        'overall_summary': summary_agg,
+    }
+
+
+# In[ ]:
+
+
+run_ordinal_iterations(num_iterations=25)
+
