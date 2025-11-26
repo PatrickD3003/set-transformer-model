@@ -12,7 +12,7 @@ import openpyxl
 import warnings
 from typing import Mapping, Iterable, Tuple, List, Union, Optional
 
-from ..utils_ordinal import cumulative_to_labels
+from .utils_ordinal import cumulative_to_labels
 
 TensorLike = Union[torch.Tensor, Tuple[torch.Tensor, ...], List[torch.Tensor]]
 
@@ -38,6 +38,8 @@ class SetTransformerOrdinalXY(nn.Module):
     expects_tuple_input = True
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         self.embedding = nn.Embedding(vocab_size, dim_in)
         input_dim = dim_in + 1 + type_vec_dim + 2
         self.encoder = nn.Sequential(
@@ -58,14 +60,32 @@ class SetTransformerOrdinalXY(nn.Module):
         difficulty = difficulty.unsqueeze(-1)
         x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)
         x_enc = self.encoder(x)
-        features = self.pool(x_enc)
+        pooled = self.pool[0](x_enc)    # PMA pooling
+        pooled = self.pool[1](pooled)   # Flatten
+        self._meta_features = pooled    # cache pooled representation
+        features = self.pool[2](pooled) # Linear projection
+        features = self.pool[3](features)  # ReLU
         return self.ordinal_head(features)
+
+    # def forward(self, inputs):
+    #     hold_idx, difficulty, type_tensor, xy_tensor = inputs
+    #     x_embed = self.embedding(hold_idx)
+    #     difficulty = difficulty.unsqueeze(-1)
+    #     x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)
+    #     x_enc = self.encoder(x)
+    #     features = self.pool(x_enc)
+    #     return self.ordinal_head(features)
+
+    def get_meta_features(self):
+        return self._meta_features
 
 
 class SetTransformerOrdinalXYAdditive(nn.Module):
     expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8, type_vec_dim=10):
         super().__init__()
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         self.hold_emb = nn.Embedding(vocab_size, feat_dim)
         self.diff_proj = nn.Linear(1, feat_dim)
         self.type_emb = nn.Parameter(torch.randn(type_vec_dim, feat_dim))
@@ -98,14 +118,34 @@ class SetTransformerOrdinalXYAdditive(nn.Module):
         xy = self.xy_mlp(xy_tensor)
         x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
         x_enc = self.encoder(x)
-        features = self.pool(x_enc)
+        pooled = self.pool[0](x_enc)    # PMA pooling
+        pooled = self.pool[1](pooled)   # Flatten
+        self._meta_features = pooled    # cache pooled representation
+        features = self.pool[2](pooled) # Linear projection
+        features = self.pool[3](features)  # ReLU
         return self.ordinal_head(features)
+
+    # def forward(self, inputs):
+    #     hold_idx, difficulty, type_tensor, xy_tensor = inputs
+    #     h = self.hold_emb(hold_idx)
+    #     d = self.diff_proj(difficulty.unsqueeze(-1))
+    #     t = type_tensor @ self.type_emb
+    #     xy = self.xy_mlp(xy_tensor)
+    #     x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
+    #     x_enc = self.encoder(x)
+    #     features = self.pool(x_enc)
+    #     return self.ordinal_head(features)
+
+    def get_meta_features(self):
+        return self._meta_features
 
 
 class SetTransformerOrdinal(nn.Module):
     expects_tuple_input = False
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_heads=4, num_inds=16, num_classes=8):
         super().__init__()
+        self.meta_feature_dim = dim_hidden
+        self._meta_features = None
         self.embedding = nn.Embedding(vocab_size, dim_in)
         self.encoder = nn.Sequential(
             ISAB(dim_in, dim_hidden, num_heads, num_inds, ln=True),
@@ -122,8 +162,21 @@ class SetTransformerOrdinal(nn.Module):
     def forward(self, hold_idx):
         x = self.embedding(hold_idx)
         x_enc = self.encoder(x)
-        features = self.pool(x_enc)
+        pooled = self.pool[0](x_enc)    # PMA pooling
+        pooled = self.pool[1](pooled)   # Flatten
+        self._meta_features = pooled    # cache pooled representation
+        features = self.pool[2](pooled) # Linear projection
+        features = self.pool[3](features)  # ReLU
         return self.ordinal_head(features)
+
+    # def forward(self, hold_idx):
+    #     x = self.embedding(hold_idx)
+    #     x_enc = self.encoder(x)
+    #     features = self.pool(x_enc)
+    #     return self.ordinal_head(features)
+
+    def get_meta_features(self):
+        return self._meta_features
 
 
 class DeepSetOrdinalXY(nn.Module):

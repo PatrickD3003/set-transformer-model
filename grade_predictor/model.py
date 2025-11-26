@@ -43,8 +43,19 @@ class SetTransformerClassifierXY(nn.Module):
         difficulty = difficulty.unsqueeze(-1)           # (B, N, 1)
         x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)  # (B, N, D+1+T+2)
         x_enc = self.encoder(x)
-        self._meta_features = x_enc.mean(dim=1)
-        return self.decoder(x_enc)
+        pooled = self.decoder[0](x_enc)   # 1. PMA pooling
+        pooled = self.decoder[1](pooled)  # 2. Flatten
+        self._meta_features = pooled      # 3. Save pooled features
+        return self.decoder[2](pooled)    # 4. Linear head
+
+    # def forward(self, inputs):
+    #     hold_idx, difficulty, type_tensor, xy_tensor = inputs  # shapes: (B, N), (B, N), (B, N, T), (B, N, 2)
+    #     x_embed = self.embedding(hold_idx)              # (B, N, dim_in)
+    #     difficulty = difficulty.unsqueeze(-1)           # (B, N, 1)
+    #     x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)  # (B, N, D+1+T+2)
+    #     x_enc = self.encoder(x)
+    #     self._meta_features = x_enc.mean(dim=1)
+    #     return self.decoder(x_enc)
     
     def get_meta_features(self):
         return self._meta_features
@@ -102,8 +113,31 @@ class SetTransformerClassifierXYAdditive(nn.Module):
         # Weighted sum
         x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
         x_enc = self.encoder(x)
-        self._meta_features = x_enc.mean(dim=1)
-        return self.decoder(x_enc)
+        pooled = self.decoder[0](x_enc)   # PMA pooling
+        pooled = self.decoder[1](pooled)  # Flatten
+        self._meta_features = pooled
+        return self.decoder[2](pooled)    # Linear head
+
+    # def forward(self, inputs):
+    #     hold_idx, difficulty, type_tensor, xy_tensor = inputs
+    #     # shapes: (B,N)  (B,N)  (B,N,T)  (B,N,2)
+    #     # hold ID
+    #     h  = self.hold_emb(hold_idx)                       # (B,N,feat_dim)
+    #     # hold difficulty
+    #     d  = difficulty.unsqueeze(-1)                     # (B,N,1)
+    #     d  = self.diff_proj(d)                            # (B,N,feat_dim)
+    #     # hold types
+    #     t  = type_tensor @ self.type_emb                  # (B,N,feat_dim)
+    #     # XY position
+    #     xy = self.xy_mlp(xy_tensor)                       # (B,N,feat_dim)
+    #     # element-wise addition
+    #     # TODO: 重みを入れてみる 学習可能な重みを掛け算して
+    #     # x = h + d + t + xy                                # (B,N,feat_dim)
+    #     # Weighted sum
+    #     x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
+    #     x_enc = self.encoder(x)
+    #     self._meta_features = x_enc.mean(dim=1)
+    #     return self.decoder(x_enc)
     
     def get_meta_features(self):
         return self._meta_features
@@ -237,8 +271,17 @@ class SetTransformerClassifier(nn.Module):
         # x: (B, N, dim_in)
         x = self.embedding(x)
         x_enc = self.encoder(x)
-        self._meta_features = x_enc.mean(dim=1)
-        return self.decoder(x_enc)
+        pooled = self.decoder[0](x_enc)  # 1. Apply PMA (Smart Pooling)
+        pooled = self.decoder[1](pooled)  # 2. Flatten
+        self._meta_features = pooled  # <--- Saves PMA Output
+        return self.decoder[2](pooled)  # 3. Apply Linear
+
+    # def forward(self, x):
+    #     # x: (B, N, dim_in)
+    #     x = self.embedding(x)
+    #     x_enc = self.encoder(x)
+    #     self._meta_features = x_enc.mean(dim=1)
+    #     return self.decoder(x_enc)
     
     def get_meta_features(self):
         return self._meta_features

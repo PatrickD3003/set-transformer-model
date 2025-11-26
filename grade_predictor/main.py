@@ -19,8 +19,9 @@ from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
 import os
 import csv
-from grade_predictor.models.modules_modified import ISAB, SAB, PMA
+from models.modules_modified import ISAB, SAB, PMA
 import pandas as pd
+from collections import defaultdict
 
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
@@ -69,7 +70,7 @@ from models.ordinal import (
     OrdinalAdaBoostEnsemble,
 )
 
-from utils_ordinal import ordinal_logistic_loss, cumulative_to_labels, threshold_accuracy
+from models.utils_ordinal import ordinal_logistic_loss, cumulative_to_labels, threshold_accuracy
 
 
 # In[ ]:
@@ -86,6 +87,9 @@ hold_to_idx = {f"{c}{r}": i for i, (c, r) in enumerate((c, r) for r in rows for 
 grade_to_label = {f"V{i}": i - 4 for i in range(4, 12)}  
 label_to_grade = {v: k for k, v in grade_to_label.items()}
 print(hold_to_idx)
+
+# number of iterations 
+num_iterations = 25
 
 
 # In[ ]:
@@ -199,7 +203,16 @@ embed_dim = 64
 batch_size = 16
 lr = 1e-4
 epochs = 20
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Check for CUDA (NVIDIA), then MPS (Mac Silicon), then fallback to CPU
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
+print(f"Using device: {device}")
 
 XY_MODELS = {
     'set_transformer_xy',
@@ -525,13 +538,13 @@ MODEL_TYPES = BASE_MODEL_TYPES + list(BOOSTING_TYPES.keys())
 
 ENSEMBLE_TYPES = [
     "soft_voting_ensemble",
-    "geometric_mean_ensemble",
-    "median_ensemble",
-    "trimmed_mean_ensemble",
+    # "geometric_mean_ensemble",
+    # "median_ensemble",
+    # "trimmed_mean_ensemble",
     "stacking_ensemble",
     "gbm_ensemble",
     "xgboost_ensemble",
-    "lightgbm_ensemble"
+    # "lightgbm_ensemble"
 ]
 
 MODEL_COUNT_COLUMNS = {name: f"{name}_count" for name in MODEL_TYPES + ENSEMBLE_TYPES}
@@ -1049,7 +1062,7 @@ def compare_models(
             df_results = pd.DataFrame(results)
             df_results.to_excel(excel_path, index=False)
 
-        save_confusion_matrix_to_excel(y_true, y_pred, class_labels, mtype, excel_path)
+        # save_confusion_matrix_to_excel(y_true, y_pred, class_labels, mtype, excel_path)
         export_predictions_to_excel(
             model,
             val_loader,
@@ -1126,7 +1139,7 @@ def compare_models(
                         "Val ±1 Grade Accuracy (%)": val_loose_acc,
                     })
 
-                    save_confusion_matrix_to_excel(y_true, y_pred, class_labels, name, excel_path)
+                    # save_confusion_matrix_to_excel(y_true, y_pred, class_labels, name, excel_path)
                     export_predictions_to_excel(
                         ensemble_model,
                         ensemble_val_loader,
@@ -1220,8 +1233,8 @@ def run_multiple_iterations(num_iterations=25, **compare_kwargs):
 
 
 # usage
-if __name__ == "__main__":
-    run_multiple_iterations(num_iterations=25)
+# if __name__ == "__main__":
+#     run_multiple_iterations(num_iterations)
 
 
 # In[ ]:
@@ -1613,3 +1626,25 @@ def run_ordinal_iterations(
 
 run_ordinal_iterations(num_iterations=25)
 
+run_ordinal_iterations(
+    ordinal_model_types=[
+        'set_transformer_ordinal',
+        'set_transformer_ordinal_xy',
+        'set_transformer_ordinal_xy_additive',
+        'deepset_ordinal',
+        'deepset_ordinal_xy',
+        'deepset_ordinal_xy_additive',
+    ],
+    ordinal_ensemble_types=[
+        'ordinal_soft_voting_ensemble',
+        'ordinal_geometric_mean_ensemble',
+        'ordinal_median_ensemble',
+        'ordinal_trimmed_mean_ensemble',
+        'ordinal_stacking_ensemble',
+        'ordinal_gbm_ensemble',
+        'ordinal_xgboost_ensemble',
+        'ordinal_lightgbm_ensemble',
+        'ordinal_adaboost_ensemble',
+    ],
+    num_iterations = num_iterations
+)
