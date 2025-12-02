@@ -1233,8 +1233,8 @@ def run_multiple_iterations(num_iterations=25, **compare_kwargs):
 
 
 # usage
-# if __name__ == "__main__":
-#     run_multiple_iterations(num_iterations)
+if __name__ == "__main__":
+    run_multiple_iterations(num_iterations)
 
 
 # In[ ]:
