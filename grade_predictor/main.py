@@ -366,15 +366,21 @@ def main(model_type):
     return train_loader, val_loader, model, dataset, train_idx, val_idx
 
 
-def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
+def train_boosting_main(model_types, num_stages=5, weak_epochs=3):
     """
     Replaces the `main(mtype)` call for boosting models.
-    Trains a sequential AdaBoost-style ensemble.
+    Trains a sequential AdaBoost-style ensemble that can rotate through
+    multiple base model types.
     
     Returns the same tuple as `main()`:
     (train_loader, val_loader, final_model, dataset, train_idx, val_idx)
     """
-    print(f"===== Training Boosting Ensemble ({model_type}, {num_stages} stages) =====")
+    if isinstance(model_types, str):
+        model_types = [model_types]
+    if not model_types:
+        raise ValueError("At least one base model type is required for boosting.")
+
+    print(f"===== Training Boosting Ensemble ({model_types}, {num_stages} stages) =====")
     
     # --- 1. Standard Dataset Setup (copied from `main`) ---
     dataset = load_dataset(json_path, hold_to_idx, grade_to_label, hold_difficulty, type_to_idx, hold_to_coord)
@@ -384,8 +390,9 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
     type_vec_dim = len(type_to_idx)
     is_ordinal = False # Boosting classifiers, not ordinal models
 
-    collate_fn = make_collate_fn(model_type) # Use collate fn for the base model
-    
+    # Collate functions for every participating base model
+    collate_fns = {mtype: make_collate_fn(mtype) for mtype in set(model_types)}
+
     # Get train/val split (we need the indices)
     train_idx, val_idx = train_test_split(
         list(range(len(dataset))), test_size=0.2, stratify=targets, random_state=42
@@ -394,11 +401,20 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
     train_data_subset = Subset(dataset, train_idx)
     val_data_subset = Subset(dataset, val_idx)
     
-    # This is the standard val_loader, used for final eval
-    val_loader = DataLoader(val_data_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    
-    # This loader is for *evaluating* the weak learner on train data (no shuffle)
-    train_eval_loader = DataLoader(train_data_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    # Per-model loaders (no shuffle) for evaluating each weak learner
+    train_eval_loaders = {
+        mtype: DataLoader(train_data_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fns[mtype])
+        for mtype in collate_fns
+    }
+    val_loaders = {
+        mtype: DataLoader(val_data_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fns[mtype])
+        for mtype in collate_fns
+    }
+
+    # Use a superset collate function for the final ensemble (needs XY features if any member does)
+    eval_collate_type = next((m for m in model_types if m in XY_MODELS), model_types[0])
+    final_train_loader = train_eval_loaders[eval_collate_type]
+    final_val_loader = val_loaders[eval_collate_type]
 
     # --- 2. Boosting-Specific Setup ---
     num_train_samples = len(train_idx)
@@ -407,39 +423,46 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
     
     trained_models_list = [] # (name, model)
     model_alphas = []        # [alpha]
+    stage_model_types = []   # Track which model was used at each stage
     
     # --- 3. The Sequential Training Loop ---
     for m in range(num_stages):
-        print(f"--- Boosting Stage {m+1}/{num_stages} ---")
+        stage_model_type = model_types[m % len(model_types)]
+        print(f"--- Boosting Stage {m+1}/{num_stages} ({stage_model_type}) ---")
         
         # a. Create a new dataloader for this stage
         #    It samples from train_data_subset based on the *current* sample_weights
         sampler = WeightedRandomSampler(sample_weights.cpu(), num_train_samples, replacement=True)
-        train_loader_stage = DataLoader(train_data_subset, batch_size=batch_size, sampler=sampler, collate_fn=collate_fn)
+        train_loader_stage = DataLoader(
+            train_data_subset,
+            batch_size=batch_size,
+            sampler=sampler,
+            collate_fn=collate_fns[stage_model_type],
+        )
 
         # b. Create and train the weak learner
         #    We re-use the logic from your `main()` function to get the model
-        if model_type == 'set_transformer':
+        if stage_model_type == 'set_transformer':
             ModelClass = SetTransformerClassifier
             kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes)
-        elif model_type == 'set_transformer_xy':
+        elif stage_model_type == 'set_transformer_xy':
             ModelClass = SetTransformerClassifierXY
             kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
-        elif model_type == 'set_transformer_additive':
+        elif stage_model_type == 'set_transformer_additive':
             ModelClass = SetTransformerClassifierXYAdditive
             kwargs = dict(vocab_size=vocab_size, feat_dim=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
-        elif model_type == 'deepset':
+        elif stage_model_type == 'deepset':
             ModelClass = DeepSetClassifier
             kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes)
-        elif model_type == 'deepset_xy':
+        elif stage_model_type == 'deepset_xy':
             ModelClass = DeepSetClassifierXY
             kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
-        elif model_type == 'deepset_xy_additive':
+        elif stage_model_type == 'deepset_xy_additive':
             ModelClass = DeepSetClassifierXYAdditive
             kwargs = dict(vocab_size=vocab_size, feat_dim=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
         else:
             # This is the correct error message
-            raise ValueError(f"Unsupported weak learner type for boosting: {model_type}")
+            raise ValueError(f"Unsupported weak learner type for boosting: {stage_model_type}")
 
         model_m = ModelClass(**kwargs).to(device)
         
@@ -449,14 +472,22 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
         
         # c. Train this weak learner (RE-USING YOUR EXISTING `train_model` FUNCTION!)
         print(f"Training weak learner {m+1} for {weak_epochs} epochs...")
-        model_m = train_model(model_m, train_loader_stage, val_loader, criterion_fn, optimizer, weak_epochs, is_ordinal=is_ordinal)
+        model_m = train_model(
+            model_m,
+            train_loader_stage,
+            val_loaders[stage_model_type],
+            criterion_fn,
+            optimizer,
+            weak_epochs,
+            is_ordinal=is_ordinal,
+        )
         
         # d. Evaluate on *all* training data (unshuffled)
         model_m.eval()
         all_preds = []
         all_targets = []
         with torch.no_grad():
-            for X, y in train_eval_loader: # Use NON-shuffled loader
+            for X, y in train_eval_loaders[stage_model_type]: # Use NON-shuffled loader
                 inputs = tuple(x.to(device) for x in X)
                 payload = inputs[0] if len(inputs) == 1 else inputs
                 logits = model_m(payload)
@@ -474,7 +505,8 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
             print(f"Stage {m+1} model is perfect or too weak (err={err_m:.4f}). Stopping.")
             if err_m <= 0: # Add perfect model and break
                 model_alphas.append(1.0) # Use a reasonable weight
-                trained_models_list.append((f"boost_model_{m}", model_m))
+                trained_models_list.append((f"{stage_model_type}_boost_model_{m}", model_m))
+                stage_model_types.append(stage_model_type)
             break
         
         # f. Compute model weight (alpha)
@@ -485,7 +517,8 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
         sample_weights /= sample_weights.sum() # Normalize
         
         # h. Save
-        trained_models_list.append((f"boost_model_{m}", model_m))
+        stage_model_types.append(stage_model_type)
+        trained_models_list.append((f"{stage_model_type}_boost_model_{m}", model_m))
         model_alphas.append(alpha_m.item())
         print(f"Stage {m+1}: Error={err_m:.4f}, Alpha={alpha_m:.4f}")
     
@@ -500,11 +533,12 @@ def train_boosting_main(model_type, num_stages=5, weak_epochs=3):
     
     final_ensemble.is_ordinal = is_ordinal
     final_ensemble.num_classes = num_classes
+    final_ensemble.stage_model_types = stage_model_types
     
     # Return the same "package" as main()
     # `train_eval_loader` is the unshuffled train loader, which `compare_models`
     # can use for ensemble training (like stacking) if needed.
-    return train_eval_loader, val_loader, final_ensemble, dataset, train_idx, val_idx
+    return final_train_loader, final_val_loader, final_ensemble, dataset, train_idx, val_idx
 
 
 # In[ ]:
@@ -526,25 +560,22 @@ BASE_MODEL_TYPES = [
 ]
 
 BOOSTING_TYPES = {
-    "adaboost_deepset": "deepset",
-    "adaboost_deepset_xy_additive": "deepset_xy_additive",
-    "adaboost_deepset_xy": "deepset_xy",
-    "adaboost_set_transformer": "set_transformer",
-    "adaboost_set_transformer_additive": "set_transformer_additive",
-    "adaboost_set_transformer_xy": "set_transformer_xy",
+    "adaboost_all": list(BASE_MODEL_TYPES),
+    "adaboost_set_transformer": ["set_transformer", "set_transformer_xy", "set_transformer_additive"],
+    "adaboost_deepset": ["deepset", "deepset_xy", "deepset_xy_additive"],
 }
 
 MODEL_TYPES = BASE_MODEL_TYPES + list(BOOSTING_TYPES.keys())
 
 ENSEMBLE_TYPES = [
     "soft_voting_ensemble",
-    # "geometric_mean_ensemble",
-    # "median_ensemble",
-    # "trimmed_mean_ensemble",
     "stacking_ensemble",
     "gbm_ensemble",
     "xgboost_ensemble",
     # "lightgbm_ensemble"
+    # "geometric_mean_ensemble",
+    # "median_ensemble",
+    # "trimmed_mean_ensemble",
 ]
 
 MODEL_COUNT_COLUMNS = {name: f"{name}_count" for name in MODEL_TYPES + ENSEMBLE_TYPES}
@@ -1021,10 +1052,10 @@ def compare_models(
         
         if mtype in BOOSTING_TYPES:
             # --- This is a SEQUENTIAL (Boosting) Model ---
-            base_model_type = BOOSTING_TYPES[mtype]
+            base_model_types = BOOSTING_TYPES[mtype]
             # Call our new boosting trainer
             train_loader, val_loader, model, dataset, train_idx, val_idx = train_boosting_main(
-                model_type=base_model_type,
+                model_types=base_model_types,
                 num_stages=boosting_num_stages,
                 weak_epochs=boosting_weak_epochs
             )
@@ -1298,16 +1329,16 @@ ORDINAL_BASE_MODEL_TYPES = [
 
 ORDINAL_ENSEMBLE_TYPES = [
     'ordinal_soft_voting_ensemble',
-    'ordinal_geometric_mean_ensemble',
-    'ordinal_median_ensemble',
-    'ordinal_trimmed_mean_ensemble',
     'ordinal_stacking_ensemble',
     'ordinal_gbm_ensemble',
     'ordinal_xgboost_ensemble',
-    'ordinal_lightgbm_ensemble',
     'ordinal_adaboost_ensemble',
+    # 'ordinal_lightgbm_ensemble',
+    # 'ordinal_adaboost_ensemble',
+    # 'ordinal_geometric_mean_ensemble',
+    # 'ordinal_median_ensemble',
+    # 'ordinal_trimmed_mean_ensemble',
 ]
-
 
 def train_ordinal_stacking_meta_model(stacking_model, dataloader, device, epochs=5, lr=1e-3):
     if epochs <= 0:
@@ -1565,27 +1596,39 @@ def run_ordinal_iterations(
             ensemble_val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
             base_items = list(trained_base_models.items())
-            ensembles = build_ordinal_ensemble_models(
-                ordinal_ensemble_types,
-                base_items,
-                num_classes=num_classes or len(grade_to_label),
-                device=device,
-                train_loader=ensemble_train_loader,
-                stacking_meta_epochs=stacking_meta_epochs,
-                stacking_meta_lr=stacking_meta_lr,
-                ensemble_weights=ensemble_weights,
-            )
+            ensemble_groups = [
+                ("all", base_items),
+                ("set_transformer", [(name, model) for name, model in base_items if "set_transformer" in name]),
+                ("deepset", [(name, model) for name, model in base_items if "deepset" in name]),
+            ]
 
-            for name, ensemble_model in ensembles.items():
-                table, overall_acc = evaluate_ordinal_thresholds(
-                    ensemble_model,
-                    ensemble_val_loader,
-                    grade_to_label=grade_to_label,
+            for group_name, group_items in ensemble_groups:
+                if not group_items:
+                    print(f"Skipping ordinal {group_name} ensembles (no models).")
+                    continue
+
+                ensembles = build_ordinal_ensemble_models(
+                    ordinal_ensemble_types,
+                    group_items,
+                    num_classes=num_classes or len(grade_to_label),
                     device=device,
-                    decision_threshold=decision_threshold,
-                    model_name=None,
+                    train_loader=ensemble_train_loader,
+                    stacking_meta_epochs=stacking_meta_epochs,
+                    stacking_meta_lr=stacking_meta_lr,
+                    ensemble_weights=ensemble_weights,
+                    label_suffix=f"_{group_name}",
                 )
-                record_metrics(name, table, overall_acc)
+
+                for name, ensemble_model in ensembles.items():
+                    table, overall_acc = evaluate_ordinal_thresholds(
+                        ensemble_model,
+                        ensemble_val_loader,
+                        grade_to_label=grade_to_label,
+                        device=device,
+                        decision_threshold=decision_threshold,
+                        model_name=None,
+                    )
+                    record_metrics(name, table, overall_acc)
 
     if not summary_records:
         print('No ordinal evaluations were executed.')
