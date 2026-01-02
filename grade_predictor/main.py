@@ -972,7 +972,7 @@ def build_ensemble_models(
                     weights=weights,
                     freeze_members=True,
                     num_classes=num_classes,
-                    feature_source="logits",
+                    feature_source="logits+internal",
                     combine="concat",
                     meta_kwargs={"random_state": 42},
                 ).to(device)
@@ -987,7 +987,7 @@ def build_ensemble_models(
                     weights=weights,
                     freeze_members=True,
                     num_classes=num_classes,
-                    feature_source="logits",
+                    feature_source="logits+internal",
                     combine="concat",
                     meta_kwargs={"n_estimators": 300, "learning_rate": 0.05, "max_depth": 4},
                 ).to(device)
@@ -1002,7 +1002,7 @@ def build_ensemble_models(
                     weights=weights,
                     freeze_members=True,
                     num_classes=num_classes,
-                    feature_source="logits",
+                    feature_source="logits+internal",
                     combine="concat",
                     meta_kwargs={"n_estimators": 300, "learning_rate": 0.05, "max_depth": -1},
                 ).to(device)

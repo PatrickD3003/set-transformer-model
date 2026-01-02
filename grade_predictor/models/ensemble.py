@@ -384,8 +384,7 @@ class TreeMetaEnsemble(BaseEnsemble):
         combine: str = "concat",
     ):
         super().__init__(models, weights=weights, freeze_members=freeze_members)
-        if feature_source not in {"logits", "probs"}:
-            raise ValueError("feature_source must be 'logits' or 'probs'.")
+        self._base_feature_mode, self._use_internal = self._parse_feature_source(feature_source)
         if combine not in {"concat", "mean"}:
             raise ValueError("combine must be 'concat' or 'mean'.")
         if meta_model is None:
@@ -400,22 +399,68 @@ class TreeMetaEnsemble(BaseEnsemble):
         self._is_fitted = False
         self._meta_classes: Optional[List[int]] = None
 
+    @staticmethod
+    def _parse_feature_source(source: str) -> Tuple[Optional[str], bool]:
+        valid = {
+            "logits": ("logits", False),
+            "probs": ("probs", False),
+            "internal": (None, True),
+            "logits+internal": ("logits", True),
+            "probs+internal": ("probs", True),
+        }
+        if source not in valid:
+            raise ValueError(
+                "feature_source must be one of "
+                "'logits', 'probs', 'internal', 'logits+internal', or 'probs+internal'."
+            )
+        return valid[source]
+
     def _member_features(self, inputs: TensorLike) -> torch.Tensor:
         """
         Collect logits/probabilities from each frozen base learner.
-        Returns tensor of shape [M, B, C].
+        Returns tensor of shape [M, B, F].
         """
         tuple_inputs = tuple(inputs) if isinstance(inputs, list) else inputs
         feats = []
-        for module in self.models.values():
+        for name, module in self.models.items():
             prepared = self._prepare_inputs(module, tuple_inputs)
             out = module(prepared)
             logits = self._extract_logits(out)
-            if self.feature_source == "probs":
-                feats.append(F.softmax(logits, dim=-1))
-            else:
-                feats.append(logits)
-        return torch.stack(feats, dim=0)  # [M,B,C]
+            blocks = []
+            if self._base_feature_mode == "probs":
+                blocks.append(F.softmax(logits, dim=-1))
+            elif self._base_feature_mode == "logits":
+                blocks.append(logits)
+
+            if self._use_internal:
+                extra_dim = int(getattr(module, "meta_feature_dim", 0))
+                extractor = getattr(module, "get_meta_features", None)
+                if extra_dim <= 0 or extractor is None:
+                    raise ValueError(
+                        f"Model '{name}' does not expose encoder features "
+                        f"required by feature_source='{self.feature_source}'."
+                    )
+                internal_feat = extractor()
+                if internal_feat is None:
+                    raise RuntimeError(
+                        f"Model '{name}' failed to cache encoder features for stacking. "
+                        "Ensure its forward method stores them before returning."
+                    )
+                if internal_feat.ndim > 2:
+                    internal_feat = internal_feat.reshape(internal_feat.shape[0], -1)
+                if internal_feat.shape[-1] != extra_dim:
+                    raise ValueError(
+                        f"Model '{name}' reported meta_feature_dim={extra_dim} "
+                        f"but produced features with size {internal_feat.shape[-1]}."
+                    )
+                blocks.append(internal_feat)
+
+            if not blocks:
+                raise RuntimeError(
+                    f"feature_source '{self.feature_source}' produced no features for model '{name}'."
+                )
+            feats.append(blocks[0] if len(blocks) == 1 else torch.cat(blocks, dim=-1))
+        return torch.stack(feats, dim=0)  # [M,B,F]
 
     def _combine(self, member_probs: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         """

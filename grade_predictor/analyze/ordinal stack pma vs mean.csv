@@ -1,0 +1,3 @@
+model,P(>V4),P(>V5),P(>V6),P(>V7),P(>V8),P(>V9)
+ordinal_stacking_set_transformer (mean-pooled),84.35079987,82.86799988,86.21840057,88.97759918,92.99399994,96.69360046
+ordinal_stacking_set_transformer (PMA-pooled),84.15639984,82.91720001,86.07399963,88.78080017,93.01039978,96.63799988

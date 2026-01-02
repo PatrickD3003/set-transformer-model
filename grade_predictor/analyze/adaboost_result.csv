@@ -1,0 +1,4 @@
+﻿Model Type,Train Strict Mean (%),Train Strict Std (%),Train ±1 Grade Mean (%),Train ±1 Grade Std (%),Val Strict Mean (%),Val Strict Std (%),Val ±1 Grade Mean (%),Val ±1 Grade Std (%)
+adaboost_all,50.007,0.576,83.043,0.49,46.013,0.921,80.839,0.947
+adaboost_deepset,46.33,0.532,83.141,0.609,45.078,0.693,81.748,0.818
+adaboost_set_transformer,51.875,0.546,84.335,0.512,46.316,0.635,81.569,0.671
