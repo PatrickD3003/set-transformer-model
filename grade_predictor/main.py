@@ -541,6 +541,165 @@ def train_boosting_main(model_types, num_stages=5, weak_epochs=3):
     return final_train_loader, final_val_loader, final_ensemble, dataset, train_idx, val_idx
 
 
+def train_ordinal_boosting_main(
+    model_types,
+    num_stages=5,
+    weak_epochs=3,
+    decision_threshold=0.5,
+    train_idx=None,
+    val_idx=None,
+):
+    """
+    Train an AdaBoost-style ensemble for ordinal models and return OrdinalAdaBoostEnsemble.
+    """
+    if isinstance(model_types, str):
+        model_types = [model_types]
+    if not model_types:
+        raise ValueError("At least one ordinal base model type is required for boosting.")
+    for mtype in model_types:
+        if mtype not in ORDINAL_MODELS:
+            raise ValueError(f"Unsupported ordinal weak learner type for boosting: {mtype}")
+
+    print(f"===== Training Ordinal Boosting Ensemble ({model_types}, {num_stages} stages) =====")
+
+    dataset = load_dataset(json_path, hold_to_idx, grade_to_label, hold_difficulty, type_to_idx, hold_to_coord)
+    targets = [grade_to_label[item['grade']] for item in dataset.raw]
+    num_classes = len(np.unique(targets))
+    vocab_size = len(hold_to_idx)
+    type_vec_dim = len(type_to_idx)
+    is_ordinal = True
+
+    collate_fns = {mtype: make_collate_fn(mtype) for mtype in set(model_types)}
+
+    if train_idx is None or val_idx is None:
+        train_idx, val_idx = train_test_split(
+            list(range(len(dataset))), test_size=0.2, stratify=targets, random_state=42
+        )
+
+    train_data_subset = Subset(dataset, train_idx)
+    val_data_subset = Subset(dataset, val_idx)
+
+    train_eval_loaders = {
+        mtype: DataLoader(train_data_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fns[mtype])
+        for mtype in collate_fns
+    }
+    val_loaders = {
+        mtype: DataLoader(val_data_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fns[mtype])
+        for mtype in collate_fns
+    }
+
+    eval_collate_type = next((m for m in model_types if m in XY_MODELS), model_types[0])
+    final_train_loader = train_eval_loaders[eval_collate_type]
+    final_val_loader = val_loaders[eval_collate_type]
+
+    num_train_samples = len(train_idx)
+    sample_weights = torch.full((num_train_samples,), 1.0 / num_train_samples, device=device)
+
+    trained_models_list = []
+    model_alphas = []
+    stage_model_types = []
+
+    for m in range(num_stages):
+        stage_model_type = model_types[m % len(model_types)]
+        print(f"--- Ordinal Boosting Stage {m+1}/{num_stages} ({stage_model_type}) ---")
+
+        sampler = WeightedRandomSampler(sample_weights.cpu(), num_train_samples, replacement=True)
+        train_loader_stage = DataLoader(
+            train_data_subset,
+            batch_size=batch_size,
+            sampler=sampler,
+            collate_fn=collate_fns[stage_model_type],
+        )
+
+        if stage_model_type == 'set_transformer_ordinal':
+            ModelClass = SetTransformerOrdinal
+            kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes)
+        elif stage_model_type == 'set_transformer_ordinal_xy':
+            ModelClass = SetTransformerOrdinalXY
+            kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
+        elif stage_model_type == 'set_transformer_ordinal_xy_additive':
+            ModelClass = SetTransformerOrdinalXYAdditive
+            kwargs = dict(vocab_size=vocab_size, feat_dim=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
+        elif stage_model_type == 'deepset_ordinal':
+            ModelClass = DeepSetOrdinal
+            kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes)
+        elif stage_model_type == 'deepset_ordinal_xy':
+            ModelClass = DeepSetOrdinalXY
+            kwargs = dict(vocab_size=vocab_size, dim_in=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
+        elif stage_model_type == 'deepset_ordinal_xy_additive':
+            ModelClass = DeepSetOrdinalXYAdditive
+            kwargs = dict(vocab_size=vocab_size, feat_dim=embed_dim, num_classes=num_classes, type_vec_dim=type_vec_dim)
+        else:
+            raise ValueError(f"Unsupported ordinal weak learner type for boosting: {stage_model_type}")
+
+        model_m = ModelClass(**kwargs).to(device)
+        model_m.is_ordinal = is_ordinal
+        model_m.num_classes = num_classes
+
+        def criterion_fn(logits, targets):
+            return ordinal_logistic_loss(logits, targets)
+
+        optimizer = torch.optim.Adam(model_m.parameters(), lr=lr)
+
+        print(f"Training ordinal weak learner {m+1} for {weak_epochs} epochs...")
+        model_m = train_model(
+            model_m,
+            train_loader_stage,
+            val_loaders[stage_model_type],
+            criterion_fn,
+            optimizer,
+            weak_epochs,
+            is_ordinal=is_ordinal,
+        )
+
+        model_m.eval()
+        all_preds = []
+        all_targets = []
+        with torch.no_grad():
+            for X, y in train_eval_loaders[stage_model_type]:
+                inputs = tuple(x.to(device) for x in X)
+                payload = inputs[0] if len(inputs) == 1 else inputs
+                probs, _ = model_m(payload)
+                preds = cumulative_to_labels(probs, threshold=decision_threshold)
+                all_preds.append(preds)
+                all_targets.append(y.to(device))
+
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+
+        is_incorrect = (all_preds != all_targets).float()
+        err_m = (is_incorrect * sample_weights).sum()
+
+        if err_m <= 0 or err_m >= (1.0 - 1.0 / num_classes):
+            print(f"Stage {m+1} model is perfect or too weak (err={err_m:.4f}). Stopping.")
+            if err_m <= 0:
+                model_alphas.append(1.0)
+                trained_models_list.append((f"{stage_model_type}_boost_model_{m}", model_m))
+                stage_model_types.append(stage_model_type)
+            break
+
+        alpha_m = torch.log((1.0 - err_m) / err_m) + torch.log(torch.tensor(num_classes - 1.0, device=device))
+
+        sample_weights *= torch.exp(alpha_m * is_incorrect)
+        sample_weights /= sample_weights.sum()
+
+        stage_model_types.append(stage_model_type)
+        trained_models_list.append((f"{stage_model_type}_boost_model_{m}", model_m))
+        model_alphas.append(alpha_m.item())
+        print(f"Stage {m+1}: Error={err_m:.4f}, Alpha={alpha_m:.4f}")
+
+    if not trained_models_list:
+        raise RuntimeError("Ordinal boosting training failed, no models were trained.")
+
+    print(f"Building ordinal boosting ensemble with {len(trained_models_list)} models.")
+    final_ensemble = OrdinalAdaBoostEnsemble(trained_models_list, weights=model_alphas, freeze_members=True).to(device)
+    final_ensemble.is_ordinal = is_ordinal
+    final_ensemble.num_classes = num_classes
+    final_ensemble.stage_model_types = stage_model_types
+
+    return final_train_loader, final_val_loader, final_ensemble, dataset, train_idx, val_idx
+
+
 # In[ ]:
 
 
@@ -1331,6 +1490,20 @@ ORDINAL_BASE_MODEL_TYPES = [
     'deepset_ordinal_xy_additive',
 ]
 
+ORDINAL_BOOSTING_GROUPS = {
+    "all": list(ORDINAL_BASE_MODEL_TYPES),
+    "set_transformer": [
+        "set_transformer_ordinal",
+        "set_transformer_ordinal_xy",
+        "set_transformer_ordinal_xy_additive",
+    ],
+    "deepset": [
+        "deepset_ordinal",
+        "deepset_ordinal_xy",
+        "deepset_ordinal_xy_additive",
+    ],
+}
+
 ORDINAL_ENSEMBLE_TYPES = [
     'ordinal_soft_voting_ensemble',
     'ordinal_stacking_ensemble',
@@ -1539,6 +1712,8 @@ def run_ordinal_iterations(
     decision_threshold=0.5,
     stacking_meta_epochs=5,
     stacking_meta_lr=1e-3,
+    boosting_num_stages=5,
+    boosting_weak_epochs=3,
     ensemble_weights=None,
     output_excel='./result/ordinal_result.xlsx',
 ):
@@ -1606,33 +1781,61 @@ def run_ordinal_iterations(
                 ("deepset", [(name, model) for name, model in base_items if "deepset" in name]),
             ]
 
+            use_boosting = 'ordinal_adaboost_ensemble' in ordinal_ensemble_types
+            non_boosting_types = [t for t in ordinal_ensemble_types if t != 'ordinal_adaboost_ensemble']
+
             for group_name, group_items in ensemble_groups:
                 if not group_items:
                     print(f"Skipping ordinal {group_name} ensembles (no models).")
                     continue
 
-                ensembles = build_ordinal_ensemble_models(
-                    ordinal_ensemble_types,
-                    group_items,
-                    num_classes=num_classes or len(grade_to_label),
-                    device=device,
-                    train_loader=ensemble_train_loader,
-                    stacking_meta_epochs=stacking_meta_epochs,
-                    stacking_meta_lr=stacking_meta_lr,
-                    ensemble_weights=ensemble_weights,
-                    label_suffix=f"_{group_name}",
-                )
+                if non_boosting_types:
+                    ensembles = build_ordinal_ensemble_models(
+                        non_boosting_types,
+                        group_items,
+                        num_classes=num_classes or len(grade_to_label),
+                        device=device,
+                        train_loader=ensemble_train_loader,
+                        stacking_meta_epochs=stacking_meta_epochs,
+                        stacking_meta_lr=stacking_meta_lr,
+                        ensemble_weights=ensemble_weights,
+                        label_suffix=f"_{group_name}",
+                    )
 
-                for name, ensemble_model in ensembles.items():
+                    for name, ensemble_model in ensembles.items():
+                        table, overall_acc = evaluate_ordinal_thresholds(
+                            ensemble_model,
+                            ensemble_val_loader,
+                            grade_to_label=grade_to_label,
+                            device=device,
+                            decision_threshold=decision_threshold,
+                            model_name=None,
+                        )
+                        record_metrics(name, table, overall_acc)
+
+                if use_boosting:
+                    boost_types = ORDINAL_BOOSTING_GROUPS.get(group_name, [])
+                    if not boost_types:
+                        print(f"Skipping ordinal boosting for {group_name} (no model types).")
+                        continue
+                    _, boost_val_loader, boost_model, _, _, _ = train_ordinal_boosting_main(
+                        boost_types,
+                        num_stages=boosting_num_stages,
+                        weak_epochs=boosting_weak_epochs,
+                        decision_threshold=decision_threshold,
+                        train_idx=base_train_idx,
+                        val_idx=base_val_idx,
+                    )
+                    boost_name = f"ordinal_adaboost_ensemble_{group_name}"
                     table, overall_acc = evaluate_ordinal_thresholds(
-                        ensemble_model,
-                        ensemble_val_loader,
+                        boost_model,
+                        boost_val_loader,
                         grade_to_label=grade_to_label,
                         device=device,
                         decision_threshold=decision_threshold,
                         model_name=None,
                     )
-                    record_metrics(name, table, overall_acc)
+                    record_metrics(boost_name, table, overall_acc)
 
     if not summary_records:
         print('No ordinal evaluations were executed.')
@@ -1673,25 +1876,25 @@ def run_ordinal_iterations(
 
 run_ordinal_iterations(num_iterations=25)
 
-# run_ordinal_iterations(
-#     ordinal_model_types=[
-#         'set_transformer_ordinal',
-#         'set_transformer_ordinal_xy',
-#         'set_transformer_ordinal_xy_additive',
-#         'deepset_ordinal',
-#         'deepset_ordinal_xy',
-#         'deepset_ordinal_xy_additive',
-#     ],
-#     ordinal_ensemble_types=[
-#         'ordinal_soft_voting_ensemble',
-#         'ordinal_geometric_mean_ensemble',
-#         'ordinal_median_ensemble',
-#         'ordinal_trimmed_mean_ensemble',
-#         'ordinal_stacking_ensemble',
-#         'ordinal_gbm_ensemble',
-#         'ordinal_xgboost_ensemble',
-#         'ordinal_lightgbm_ensemble',
-#         'ordinal_adaboost_ensemble',
-#     ],
-#     num_iterations = num_iterations
-# )
+run_ordinal_iterations(
+    ordinal_model_types=[
+        'set_transformer_ordinal',
+        'set_transformer_ordinal_xy',
+        'set_transformer_ordinal_xy_additive',
+        'deepset_ordinal',
+        'deepset_ordinal_xy',
+        'deepset_ordinal_xy_additive',
+    ],
+    ordinal_ensemble_types=[
+        'ordinal_soft_voting_ensemble',
+        'ordinal_geometric_mean_ensemble',
+        'ordinal_median_ensemble',
+        'ordinal_trimmed_mean_ensemble',
+        'ordinal_stacking_ensemble',
+        'ordinal_gbm_ensemble',
+        'ordinal_xgboost_ensemble',
+        'ordinal_lightgbm_ensemble',
+        'ordinal_adaboost_ensemble',
+    ],
+    num_iterations = num_iterations
+)

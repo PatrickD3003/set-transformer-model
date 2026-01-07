@@ -124,6 +124,9 @@ class SetTransformerClassifierXY(nn.Module):
         pooled = self.decoder[1](pooled)  # 2. Flatten
         self._meta_features = pooled      # 3. Save pooled features
         return self.decoder[2](pooled)    # 4. Linear head
+    
+    def get_meta_features(self):
+        return self._meta_features
 
     # def forward(self, inputs):
     #     hold_idx, difficulty, type_tensor, xy_tensor = inputs  # shapes: (B, N), (B, N), (B, N, T), (B, N, 2)
@@ -133,9 +136,6 @@ class SetTransformerClassifierXY(nn.Module):
     #     x_enc = self.encoder(x)
     #     self._meta_features = x_enc.mean(dim=1)
     #     return self.decoder(x_enc)
-    
-    def get_meta_features(self):
-        return self._meta_features
 
 # revised set transformer, embedding for type + XY
 class SetTransformerClassifierXYAdditive(nn.Module):
@@ -194,6 +194,9 @@ class SetTransformerClassifierXYAdditive(nn.Module):
         self._meta_features = pooled
         return self.decoder[2](pooled)    # Linear head
 
+    def get_meta_features(self):
+        return self._meta_features
+    
     # def forward(self, inputs):
     #     hold_idx, difficulty, type_tensor, xy_tensor = inputs
     #     # shapes: (B,N)  (B,N)  (B,N,T)  (B,N,2)
@@ -214,8 +217,6 @@ class SetTransformerClassifierXYAdditive(nn.Module):
     #     self._meta_features = x_enc.mean(dim=1)
     #     return self.decoder(x_enc)
     
-    def get_meta_features(self):
-        return self._meta_features
     
 # --- deepset model ---
 class DeepSetClassifierXY(nn.Module):
