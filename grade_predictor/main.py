@@ -1658,7 +1658,7 @@ def build_ordinal_ensemble_models(
                     num_classes=num_classes,
                     weights=weights,
                     freeze_members=True,
-                    feature_source='logits',
+                    feature_source='logits+internal',
                     combine='concat',
                 ).to(device)
             except ImportError as exc:
@@ -1672,7 +1672,7 @@ def build_ordinal_ensemble_models(
                     num_classes=num_classes,
                     weights=weights,
                     freeze_members=True,
-                    feature_source='logits',
+                    feature_source='logits+internal',
                     combine='concat',
                 ).to(device)
             except ImportError as exc:
@@ -1686,7 +1686,7 @@ def build_ordinal_ensemble_models(
                     num_classes=num_classes,
                     weights=weights,
                     freeze_members=True,
-                    feature_source='logits',
+                    feature_source='logits+internal',
                     combine='concat',
                 ).to(device)
             except ImportError as exc:
