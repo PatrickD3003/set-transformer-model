@@ -554,8 +554,8 @@ class OrdinalTreeMetaEnsemble(BaseOrdinalEnsemble):
         combine: str = "concat",
     ):
         super().__init__(models, weights=weights, freeze_members=freeze_members)
-        if feature_source not in {"logits", "probs"}:
-            raise ValueError("feature_source must be 'logits' or 'probs'.")
+        if feature_source not in {"logits", "probs", "both"}:
+            raise ValueError("feature_source must be 'logits', 'probs', or 'both'.")
         if combine not in {"concat", "mean"}:
             raise ValueError("combine must be 'concat' or 'mean'.")
         if meta_model is None:
@@ -578,6 +578,8 @@ class OrdinalTreeMetaEnsemble(BaseOrdinalEnsemble):
             probs, logits = self._extract_probs_logits(outputs)
             if self.feature_source == "probs":
                 feats.append(probs)
+            elif self.feature_source == "both":
+                feats.append(torch.cat([logits, probs], dim=-1))
             else:
                 feats.append(logits)
         return torch.stack(feats, dim=0)  # [M, B, T]
