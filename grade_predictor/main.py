@@ -168,7 +168,7 @@ class MoonBoardDataset(Dataset):
         xy_coords = []
 
         for h in holds:
-            hold_idxs.append(self.hold_to_idx[h])
+            hold_idxs.append(self.hold_to_idx[h] + 1)
 
             difficulty, types = self.hold_difficulty[h]
             diff_values.append(difficulty / self.max_difficulty)

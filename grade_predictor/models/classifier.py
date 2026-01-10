@@ -23,7 +23,7 @@ class SetTransformerClassifier(nn.Module):
         
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.embedding = nn.Embedding(vocab_size, dim_in)
+        self.embedding = nn.Embedding(vocab_size + 1 , dim_in, padding_idx = 0)
         self.encoder = nn.Sequential(
             ISAB(dim_in, dim_hidden, num_heads, num_inds, ln=True),
             ISAB(dim_hidden, dim_hidden, num_heads, num_inds, ln=True),
@@ -61,7 +61,7 @@ class DeepSetClassifier(nn.Module):
 
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.embedding = nn.Embedding(vocab_size, dim_in)  # Embed hold indices
+        self.embedding = nn.Embedding(vocab_size + 1, dim_in,  padding_idx=0)  # Embed hold indices
 
         self.encoder = nn.Sequential(
             nn.Linear(dim_in, dim_hidden),
@@ -100,7 +100,7 @@ class SetTransformerClassifierXY(nn.Module):
 
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.embedding = nn.Embedding(vocab_size, dim_in)  # hold embedding
+        self.embedding = nn.Embedding(vocab_size + 1, dim_in, padding_idx = 0)  # hold embedding
         input_dim = dim_in + 1 + type_vec_dim + 2  # +1 for difficulty, +2 for (x, y)
 
         self.encoder = nn.Sequential(
@@ -226,7 +226,7 @@ class DeepSetClassifierXY(nn.Module):
 
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.embedding = nn.Embedding(vocab_size, dim_in)
+        self.embedding = nn.Embedding(vocab_size + 1, dim_in, padding_idx=0)
         input_dim = dim_in + 1 + type_vec_dim + 2  # hold_emb + difficulty + type_vec + (x, y)
 
         self.encoder = nn.Sequential(
