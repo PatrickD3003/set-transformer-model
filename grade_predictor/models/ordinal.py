@@ -40,7 +40,7 @@ class SetTransformerOrdinalXY(nn.Module):
         super().__init__()
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.embedding = nn.Embedding(vocab_size, dim_in)
+        self.embedding = nn.Embedding(vocab_size + 1 , dim_in, padding_idx = 0)
         input_dim = dim_in + 1 + type_vec_dim + 2
         self.encoder = nn.Sequential(
             ISAB(input_dim, dim_hidden, num_heads, num_inds, ln=True),
@@ -86,7 +86,7 @@ class SetTransformerOrdinalXYAdditive(nn.Module):
         super().__init__()
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.hold_emb = nn.Embedding(vocab_size, feat_dim)
+        self.hold_emb = nn.Embedding(vocab_size + 1, feat_dim, padding_idx = 0)
         self.diff_proj = nn.Linear(1, feat_dim)
         self.type_emb = nn.Parameter(torch.randn(type_vec_dim, feat_dim))
         self.xy_mlp = nn.Sequential(
@@ -146,7 +146,7 @@ class SetTransformerOrdinal(nn.Module):
         super().__init__()
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.embedding = nn.Embedding(vocab_size, dim_in)
+        self.embedding = nn.Embedding(vocab_size + 1 , dim_in, padding_idx = 0)
         self.encoder = nn.Sequential(
             ISAB(dim_in, dim_hidden, num_heads, num_inds, ln=True),
             ISAB(dim_hidden, dim_hidden, num_heads, num_inds, ln=True),
@@ -183,7 +183,7 @@ class DeepSetOrdinalXY(nn.Module):
     expects_tuple_input = True
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, dim_in)
+        self.embedding = nn.Embedding(vocab_size + 1 , dim_in, padding_idx = 0)
         input_dim = dim_in + 1 + type_vec_dim + 2
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, dim_hidden),
@@ -213,7 +213,7 @@ class DeepSetOrdinalXYAdditive(nn.Module):
     expects_tuple_input = True
     def __init__(self, vocab_size, feat_dim=64, dim_hidden=128, num_classes=8, type_vec_dim=10):
         super().__init__()
-        self.hold_emb = nn.Embedding(vocab_size, feat_dim)
+        self.hold_emb = nn.Embedding(vocab_size + 1 , feat_dim, padding_idx = 0)
         self.diff_proj = nn.Linear(1, feat_dim)
         self.type_emb = nn.Parameter(torch.randn(type_vec_dim, feat_dim))
         self.xy_mlp = nn.Sequential(
@@ -255,7 +255,7 @@ class DeepSetOrdinal(nn.Module):
     expects_tuple_input = False
     def __init__(self, vocab_size, dim_in=64, dim_hidden=128, num_classes=8):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, dim_in)
+        self.embedding = nn.Embedding(vocab_size + 1 , dim_in, padding_idx = 0)
         self.encoder = nn.Sequential(
             nn.Linear(dim_in, dim_hidden),
             nn.ReLU(),
