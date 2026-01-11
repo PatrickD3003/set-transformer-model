@@ -23,6 +23,7 @@ class SetTransformerClassifier(nn.Module):
         
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
+        self.embedding = nn.Embedding(vocab_size, dim_in)
         self.embedding = nn.Embedding(vocab_size + 1 , dim_in, padding_idx = 0)
         self.encoder = nn.Sequential(
             ISAB(dim_in, dim_hidden, num_heads, num_inds, ln=True),

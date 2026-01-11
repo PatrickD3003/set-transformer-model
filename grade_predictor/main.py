@@ -1131,7 +1131,7 @@ def build_ensemble_models(
                     weights=weights,
                     freeze_members=True,
                     num_classes=num_classes,
-                    feature_source="logits+internal",
+                    feature_source="logits",
                     combine="concat",
                     meta_kwargs={"random_state": 42},
                 ).to(device)
@@ -1146,7 +1146,7 @@ def build_ensemble_models(
                     weights=weights,
                     freeze_members=True,
                     num_classes=num_classes,
-                    feature_source="logits+internal",
+                    feature_source="logits",
                     combine="concat",
                     meta_kwargs={"n_estimators": 300, "learning_rate": 0.05, "max_depth": 4},
                 ).to(device)
@@ -1161,7 +1161,7 @@ def build_ensemble_models(
                     weights=weights,
                     freeze_members=True,
                     num_classes=num_classes,
-                    feature_source="logits+internal",
+                    feature_source="logits",
                     combine="concat",
                     meta_kwargs={"n_estimators": 300, "learning_rate": 0.05, "max_depth": -1},
                 ).to(device)
@@ -1583,6 +1583,7 @@ def build_ordinal_ensemble_models(
     train_loader,
     stacking_meta_epochs=5,
     stacking_meta_lr=1e-3,
+    stacking_feature_source='logits',
     ensemble_weights=None,
     label_suffix='',
 ):
@@ -1638,7 +1639,7 @@ def build_ordinal_ensemble_models(
                 weights=weights,
                 freeze_members=True,
                 meta_model=meta_model,
-                feature_source='logits+internal',
+                feature_source=stacking_feature_source,
                 combine='concat',
             ).to(device)
             inferred_dim = infer_ordinal_stacking_feature_dim(ensemble_model, train_loader, device)
@@ -1789,6 +1790,8 @@ def run_ordinal_iterations(
                     print(f"Skipping ordinal {group_name} ensembles (no models).")
                     continue
 
+                stacking_feature_source = 'logits+internal' if group_name == 'set_transformer' else 'logits'
+
                 if non_boosting_types:
                     ensembles = build_ordinal_ensemble_models(
                         non_boosting_types,
@@ -1798,6 +1801,7 @@ def run_ordinal_iterations(
                         train_loader=ensemble_train_loader,
                         stacking_meta_epochs=stacking_meta_epochs,
                         stacking_meta_lr=stacking_meta_lr,
+                        stacking_feature_source=stacking_feature_source,
                         ensemble_weights=ensemble_weights,
                         label_suffix=f"_{group_name}",
                     )
