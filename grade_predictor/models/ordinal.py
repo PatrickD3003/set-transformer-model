@@ -54,27 +54,27 @@ class SetTransformerOrdinalXY(nn.Module):
         )
         self.ordinal_head = OrdinalHead(dim_hidden, num_classes)
 
-    def forward(self, inputs):
-        hold_idx, difficulty, type_tensor, xy_tensor = inputs
-        x_embed = self.embedding(hold_idx)
-        difficulty = difficulty.unsqueeze(-1)
-        x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)
-        x_enc = self.encoder(x)
-        pooled = self.pool[0](x_enc)    # PMA pooling
-        pooled = self.pool[1](pooled)   # Flatten
-        self._meta_features = pooled    # cache pooled representation
-        features = self.pool[2](pooled) # Linear projection
-        features = self.pool[3](features)  # ReLU
-        return self.ordinal_head(features)
-
     # def forward(self, inputs):
     #     hold_idx, difficulty, type_tensor, xy_tensor = inputs
     #     x_embed = self.embedding(hold_idx)
     #     difficulty = difficulty.unsqueeze(-1)
     #     x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)
     #     x_enc = self.encoder(x)
-    #     features = self.pool(x_enc)
+    #     pooled = self.pool[0](x_enc)    # PMA pooling
+    #     pooled = self.pool[1](pooled)   # Flatten
+    #     self._meta_features = pooled    # cache pooled representation
+    #     features = self.pool[2](pooled) # Linear projection
+    #     features = self.pool[3](features)  # ReLU
     #     return self.ordinal_head(features)
+
+    def forward(self, inputs):
+        hold_idx, difficulty, type_tensor, xy_tensor = inputs
+        x_embed = self.embedding(hold_idx)
+        difficulty = difficulty.unsqueeze(-1)
+        x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)
+        x_enc = self.encoder(x)
+        features = self.pool(x_enc)
+        return self.ordinal_head(features)
 
     def get_meta_features(self):
         return self._meta_features
@@ -110,21 +110,6 @@ class SetTransformerOrdinalXYAdditive(nn.Module):
         )
         self.ordinal_head = OrdinalHead(dim_hidden, num_classes)
 
-    def forward(self, inputs):
-        hold_idx, difficulty, type_tensor, xy_tensor = inputs
-        h = self.hold_emb(hold_idx)
-        d = self.diff_proj(difficulty.unsqueeze(-1))
-        t = type_tensor @ self.type_emb
-        xy = self.xy_mlp(xy_tensor)
-        x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
-        x_enc = self.encoder(x)
-        pooled = self.pool[0](x_enc)    # PMA pooling
-        pooled = self.pool[1](pooled)   # Flatten
-        self._meta_features = pooled    # cache pooled representation
-        features = self.pool[2](pooled) # Linear projection
-        features = self.pool[3](features)  # ReLU
-        return self.ordinal_head(features)
-
     # def forward(self, inputs):
     #     hold_idx, difficulty, type_tensor, xy_tensor = inputs
     #     h = self.hold_emb(hold_idx)
@@ -133,8 +118,23 @@ class SetTransformerOrdinalXYAdditive(nn.Module):
     #     xy = self.xy_mlp(xy_tensor)
     #     x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
     #     x_enc = self.encoder(x)
-    #     features = self.pool(x_enc)
+    #     pooled = self.pool[0](x_enc)    # PMA pooling
+    #     pooled = self.pool[1](pooled)   # Flatten
+    #     self._meta_features = pooled    # cache pooled representation
+    #     features = self.pool[2](pooled) # Linear projection
+    #     features = self.pool[3](features)  # ReLU
     #     return self.ordinal_head(features)
+
+    def forward(self, inputs):
+        hold_idx, difficulty, type_tensor, xy_tensor = inputs
+        h = self.hold_emb(hold_idx)
+        d = self.diff_proj(difficulty.unsqueeze(-1))
+        t = type_tensor @ self.type_emb
+        xy = self.xy_mlp(xy_tensor)
+        x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
+        x_enc = self.encoder(x)
+        features = self.pool(x_enc)
+        return self.ordinal_head(features)
 
     def get_meta_features(self):
         return self._meta_features
@@ -159,21 +159,21 @@ class SetTransformerOrdinal(nn.Module):
         )
         self.ordinal_head = OrdinalHead(dim_hidden, num_classes)
 
-    def forward(self, hold_idx):
-        x = self.embedding(hold_idx)
-        x_enc = self.encoder(x)
-        pooled = self.pool[0](x_enc)    # PMA pooling
-        pooled = self.pool[1](pooled)   # Flatten
-        self._meta_features = pooled    # cache pooled representation
-        features = self.pool[2](pooled) # Linear projection
-        features = self.pool[3](features)  # ReLU
-        return self.ordinal_head(features)
-
     # def forward(self, hold_idx):
     #     x = self.embedding(hold_idx)
     #     x_enc = self.encoder(x)
-    #     features = self.pool(x_enc)
+    #     pooled = self.pool[0](x_enc)    # PMA pooling
+    #     pooled = self.pool[1](pooled)   # Flatten
+    #     self._meta_features = pooled    # cache pooled representation
+    #     features = self.pool[2](pooled) # Linear projection
+    #     features = self.pool[3](features)  # ReLU
     #     return self.ordinal_head(features)
+
+    def forward(self, hold_idx):
+        x = self.embedding(hold_idx)
+        x_enc = self.encoder(x)
+        features = self.pool(x_enc)
+        return self.ordinal_head(features)
 
     def get_meta_features(self):
         return self._meta_features

@@ -23,7 +23,6 @@ class SetTransformerClassifier(nn.Module):
         
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
-        self.embedding = nn.Embedding(vocab_size, dim_in)
         self.embedding = nn.Embedding(vocab_size + 1 , dim_in, padding_idx = 0)
         self.encoder = nn.Sequential(
             ISAB(dim_in, dim_hidden, num_heads, num_inds, ln=True),
@@ -35,21 +34,21 @@ class SetTransformerClassifier(nn.Module):
             nn.Linear(dim_hidden, num_classes)
         )
 
-    def forward(self, x):  
-        # x: (B, N, dim_in)
-        x = self.embedding(x)
-        x_enc = self.encoder(x)  
-        pooled = self.decoder[0](x_enc)  # 1. Apply PMA (Smart Pooling)
-        pooled = self.decoder[1](pooled)  # 2. Flatten
-        self._meta_features = pooled  # <--- Saves PMA Output
-        return self.decoder[2](pooled)  # 3. Apply Linear
-
-    # def forward(self, x):
+    # def forward(self, x):  
     #     # x: (B, N, dim_in)
     #     x = self.embedding(x)
-    #     x_enc = self.encoder(x)
-    #     self._meta_features = x_enc.mean(dim=1)  # <--- Saves Simple Mean
-    #     return self.decoder(x_enc)  # Returns standard PMA output
+    #     x_enc = self.encoder(x)  
+    #     pooled = self.decoder[0](x_enc)  # 1. Apply PMA (Smart Pooling)
+    #     pooled = self.decoder[1](pooled)  # 2. Flatten
+    #     self._meta_features = pooled  # <--- Saves PMA Output
+    #     return self.decoder[2](pooled)  # 3. Apply Linear
+
+    def forward(self, x):
+        # x: (B, N, dim_in)
+        x = self.embedding(x)
+        x_enc = self.encoder(x)
+        self._meta_features = x_enc.mean(dim=1)  # <--- Saves Simple Mean
+        return self.decoder(x_enc)  # Returns standard PMA output
     
     def get_meta_features(self):
         return self._meta_features
@@ -115,28 +114,29 @@ class SetTransformerClassifierXY(nn.Module):
             nn.Linear(dim_hidden, num_classes)
         )
 
-    def forward(self, inputs):
-        hold_idx, difficulty, type_tensor, xy_tensor = inputs  # shapes: (B, N), (B, N), (B, N, T), (B, N, 2)
-        x_embed = self.embedding(hold_idx)              # (B, N, dim_in)
-        difficulty = difficulty.unsqueeze(-1)           # (B, N, 1)
-        x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)  # (B, N, D+1+T+2)
-        x_enc = self.encoder(x)
-        pooled = self.decoder[0](x_enc)   # 1. Apply PMA (smart pooling)
-        pooled = self.decoder[1](pooled)  # 2. Flatten
-        self._meta_features = pooled      # 3. Save pooled features
-        return self.decoder[2](pooled)    # 4. Linear head
-    
-    def get_meta_features(self):
-        return self._meta_features
-
     # def forward(self, inputs):
     #     hold_idx, difficulty, type_tensor, xy_tensor = inputs  # shapes: (B, N), (B, N), (B, N, T), (B, N, 2)
     #     x_embed = self.embedding(hold_idx)              # (B, N, dim_in)
     #     difficulty = difficulty.unsqueeze(-1)           # (B, N, 1)
     #     x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)  # (B, N, D+1+T+2)
     #     x_enc = self.encoder(x)
-    #     self._meta_features = x_enc.mean(dim=1)
-    #     return self.decoder(x_enc)
+    #     pooled = self.decoder[0](x_enc)   # 1. Apply PMA (smart pooling)
+    #     pooled = self.decoder[1](pooled)  # 2. Flatten
+    #     self._meta_features = pooled      # 3. Save pooled features
+    #     return self.decoder[2](pooled)    # 4. Linear head
+
+    def forward(self, inputs):
+        hold_idx, difficulty, type_tensor, xy_tensor = inputs  # shapes: (B, N), (B, N), (B, N, T), (B, N, 2)
+        x_embed = self.embedding(hold_idx)              # (B, N, dim_in)
+        difficulty = difficulty.unsqueeze(-1)           # (B, N, 1)
+        x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)  # (B, N, D+1+T+2)
+        x_enc = self.encoder(x)
+        self._meta_features = x_enc.mean(dim=1)
+        return self.decoder(x_enc)
+    
+    def get_meta_features(self):
+        return self._meta_features
+
 
 # revised set transformer, embedding for type + XY
 class SetTransformerClassifierXYAdditive(nn.Module):
@@ -146,7 +146,7 @@ class SetTransformerClassifierXYAdditive(nn.Module):
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
         # (1) hold ID → embedding
-        self.hold_emb   = nn.Embedding(vocab_size, feat_dim)          # (B,N,feat_dim)
+        self.hold_emb   = nn.Embedding(vocab_size + 1, feat_dim, padding_idx = 0)          # (B,N,feat_dim)
         # (2) difficulty (scalar) → linear projection to feat_dim
         self.diff_proj  = nn.Linear(1, feat_dim)                      # (B,N,1) → (B,N,feat_dim)
         # (3) type (multi-hot length T) → embedding matrix, then matmul
@@ -173,31 +173,6 @@ class SetTransformerClassifierXYAdditive(nn.Module):
             nn.Linear(dim_hidden, num_classes)
         )
 
-    def forward(self, inputs):
-        hold_idx, difficulty, type_tensor, xy_tensor = inputs
-        # shapes: (B,N)  (B,N)  (B,N,T)  (B,N,2)
-        # hold ID
-        h  = self.hold_emb(hold_idx)                       # (B,N,feat_dim)
-        # hold difficulty
-        d  = difficulty.unsqueeze(-1)                     # (B,N,1)
-        d  = self.diff_proj(d)                            # (B,N,feat_dim)
-        # hold types
-        t  = type_tensor @ self.type_emb                  # (B,N,feat_dim)
-        # XY position
-        xy = self.xy_mlp(xy_tensor)                       # (B,N,feat_dim)
-        # element-wise addition
-        # x = h + d + t + xy                                # (B,N,feat_dim)
-        # Weighted sum
-        x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
-        x_enc = self.encoder(x)
-        pooled = self.decoder[0](x_enc)   # PMA pooling
-        pooled = self.decoder[1](pooled)  # Flatten
-        self._meta_features = pooled
-        return self.decoder[2](pooled)    # Linear head
-
-    def get_meta_features(self):
-        return self._meta_features
-    
     # def forward(self, inputs):
     #     hold_idx, difficulty, type_tensor, xy_tensor = inputs
     #     # shapes: (B,N)  (B,N)  (B,N,T)  (B,N,2)
@@ -215,8 +190,33 @@ class SetTransformerClassifierXYAdditive(nn.Module):
     #     # Weighted sum
     #     x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
     #     x_enc = self.encoder(x)
-    #     self._meta_features = x_enc.mean(dim=1)
-    #     return self.decoder(x_enc)
+    #     pooled = self.decoder[0](x_enc)   # PMA pooling
+    #     pooled = self.decoder[1](pooled)  # Flatten
+    #     self._meta_features = pooled
+    #     return self.decoder[2](pooled)    # Linear head
+
+    def forward(self, inputs):
+        hold_idx, difficulty, type_tensor, xy_tensor = inputs
+        # shapes: (B,N)  (B,N)  (B,N,T)  (B,N,2)
+        # hold ID
+        h  = self.hold_emb(hold_idx)                       # (B,N,feat_dim)
+        # hold difficulty
+        d  = difficulty.unsqueeze(-1)                     # (B,N,1)
+        d  = self.diff_proj(d)                            # (B,N,feat_dim)
+        # hold types
+        t  = type_tensor @ self.type_emb                  # (B,N,feat_dim)
+        # XY position
+        xy = self.xy_mlp(xy_tensor)                       # (B,N,feat_dim)
+        # element-wise addition
+        # x = h + d + t + xy                                # (B,N,feat_dim)
+        # Weighted sum
+        x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
+        x_enc = self.encoder(x)
+        self._meta_features = x_enc.mean(dim=1)
+        return self.decoder(x_enc)
+
+    def get_meta_features(self):
+        return self._meta_features
     
     
 # --- deepset model ---
@@ -267,7 +267,7 @@ class DeepSetClassifierXYAdditive(nn.Module):
         self.meta_feature_dim = dim_hidden
         self._meta_features = None
         # (1) hold ID → embedding
-        self.hold_emb   = nn.Embedding(vocab_size, feat_dim)           # (B,N,feat_dim)
+        self.hold_emb   = nn.Embedding(vocab_size + 1, feat_dim, padding_idx = 0)           # (B,N,feat_dim)
         # (2) difficulty (scalar) → linear projection to feat_dim
         self.diff_proj  = nn.Linear(1, feat_dim)                       # (B,N,1) → (B,N,feat_dim)
         # (3) type (multi-hot length T) → embedding matrix, then matmul

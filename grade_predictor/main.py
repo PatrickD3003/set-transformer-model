@@ -727,10 +727,10 @@ BOOSTING_TYPES = {
 MODEL_TYPES = BASE_MODEL_TYPES + list(BOOSTING_TYPES.keys())
 
 ENSEMBLE_TYPES = [
-    "soft_voting_ensemble",
+    # "soft_voting_ensemble",
     "stacking_ensemble",
-    "gbm_ensemble",
-    "xgboost_ensemble",
+    # "gbm_ensemble",
+    # "xgboost_ensemble",
     # "lightgbm_ensemble"
     # "geometric_mean_ensemble",
     # "median_ensemble",
@@ -1424,11 +1424,7 @@ def run_multiple_iterations(num_iterations=25, **compare_kwargs):
 
 # usage
 if __name__ == "__main__":
-    run_multiple_iterations(
-        num_iterations = 25,
-        model_types=list(BOOSTING_TYPES.keys()),
-        include_ensemble=False
-        )
+    run_multiple_iterations()
 
 
 # In[ ]:
@@ -1878,7 +1874,7 @@ def run_ordinal_iterations(
 # In[ ]:
 
 
-run_ordinal_iterations(num_iterations=25)
+# run_ordinal_iterations(num_iterations=25)
 
 run_ordinal_iterations(
     ordinal_model_types=[
@@ -1890,15 +1886,15 @@ run_ordinal_iterations(
         'deepset_ordinal_xy_additive',
     ],
     ordinal_ensemble_types=[
-        'ordinal_soft_voting_ensemble',
-        'ordinal_geometric_mean_ensemble',
-        'ordinal_median_ensemble',
-        'ordinal_trimmed_mean_ensemble',
+        # 'ordinal_soft_voting_ensemble',
+        # 'ordinal_geometric_mean_ensemble',
+        # 'ordinal_median_ensemble',
+        # 'ordinal_trimmed_mean_ensemble',
         'ordinal_stacking_ensemble',
-        'ordinal_gbm_ensemble',
-        'ordinal_xgboost_ensemble',
-        'ordinal_lightgbm_ensemble',
-        'ordinal_adaboost_ensemble',
+        # 'ordinal_gbm_ensemble',
+        # 'ordinal_xgboost_ensemble',
+        # 'ordinal_lightgbm_ensemble',
+        # 'ordinal_adaboost_ensemble',
     ],
     num_iterations = num_iterations
 )
