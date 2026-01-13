@@ -73,7 +73,11 @@ class SetTransformerOrdinalXY(nn.Module):
         difficulty = difficulty.unsqueeze(-1)
         x = torch.cat([x_embed, difficulty, type_tensor, xy_tensor], dim=-1)
         x_enc = self.encoder(x)
-        features = self.pool(x_enc)
+        pooled = self.pool[0](x_enc)
+        pooled = self.pool[1](pooled)
+        self._meta_features = pooled
+        features = self.pool[2](pooled)
+        features = self.pool[3](features)
         return self.ordinal_head(features)
 
     def get_meta_features(self):
@@ -133,7 +137,11 @@ class SetTransformerOrdinalXYAdditive(nn.Module):
         xy = self.xy_mlp(xy_tensor)
         x = self.w_hold * h + self.w_diff * d + self.w_type * t + self.w_xy * xy
         x_enc = self.encoder(x)
-        features = self.pool(x_enc)
+        pooled = self.pool[0](x_enc)
+        pooled = self.pool[1](pooled)
+        self._meta_features = pooled
+        features = self.pool[2](pooled)
+        features = self.pool[3](features)
         return self.ordinal_head(features)
 
     def get_meta_features(self):
@@ -172,7 +180,11 @@ class SetTransformerOrdinal(nn.Module):
     def forward(self, hold_idx):
         x = self.embedding(hold_idx)
         x_enc = self.encoder(x)
-        features = self.pool(x_enc)
+        pooled = self.pool[0](x_enc)
+        pooled = self.pool[1](pooled)
+        self._meta_features = pooled
+        features = self.pool[2](pooled)
+        features = self.pool[3](features)
         return self.ordinal_head(features)
 
     def get_meta_features(self):
